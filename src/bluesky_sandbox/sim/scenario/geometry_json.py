@@ -15,6 +15,7 @@ import numpy as np
 
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
+from bluesky_sandbox.sim.spawn.heading import is_toward_route
 from bluesky_sandbox.sim.spawn.regions import param_alt_range
 
 __all__ = [
@@ -138,6 +139,8 @@ def spawn_region_geometry(index: int, region: Any) -> dict[str, Any]:
         "max_aircraft": region.max_n(),
         # Initial-heading range (deg), or None when unconstrained (uniform 0-360).
         "heading": heading_range(region.params.get("hdg_deg")),
+        # Each aircraft headed at its route's first fix: no one range to draw.
+        "heading_toward_route": is_toward_route(region.params.get("hdg_deg")),
         **bounds_geometry(region.shape),
     }
     # The band aircraft spawn into is their ``alt_ft`` where it is given - as

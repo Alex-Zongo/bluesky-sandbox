@@ -270,6 +270,7 @@ export function SpawnBody({
         <ValueField
           label="heading °"
           step={10}
+          allowTowardRoute
           value={region.params?.hdg_deg ?? { type: "range", low: 0, high: 360 }}
           onChange={(v) => onChange({ ...region, params: { ...region.params, hdg_deg: v } })}
         />

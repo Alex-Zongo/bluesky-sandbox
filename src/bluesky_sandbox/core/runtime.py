@@ -271,12 +271,18 @@ class BlueSkyRuntime:
                 if target.waypoint is None
                 else target.waypoint
             )
+            # BlueSky adds each waypoint in the route's current mode: switch
+            # to fly-over for this one, and back to fly-by after it.
+            if target.flyover:
+                bs.stack.stack(f"ADDWPT {callsign} FLYOVER")
             self._stack_addwpt(
                 callsign,
                 waypoint_ref,
                 target.alt_ft,
                 target.speed_kts,
             )
+            if target.flyover:
+                bs.stack.stack(f"ADDWPT {callsign} FLYBY")
 
     def _stack_addwpt(
         self,

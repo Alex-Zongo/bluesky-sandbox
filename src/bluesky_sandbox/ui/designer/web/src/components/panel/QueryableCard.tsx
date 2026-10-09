@@ -91,6 +91,20 @@ export function QueryableBody({
         </FieldGroup>
         <FieldGroup title="Constraints">
           <WaypointConstraints q={q} onChange={onChange} />
+          <label className="radio">
+            <input
+              type="checkbox"
+              checked={q.flyover === true}
+              onChange={(e) => {
+                const { flyover: _, ...rest } = q;
+                onChange(e.target.checked ? { ...rest, flyover: true } : rest);
+              }}
+            />
+            fly over
+          </label>
+          <div className="muted small">
+            A route crosses the fix before it turns, rather than turning early to join the next leg.
+          </div>
         </FieldGroup>
         {appearance}
         {advanced}

@@ -396,13 +396,14 @@ export function deckLayers(
 
   // Spawn directions: when a spawn region is selected, draw a "pie" wedge out of
   // its center spanning the heading range (a full disk when unconstrained), plus
-  // a mean-direction arrow.
+  // a mean-direction arrow - none when each aircraft heads at its route, which
+  // the spawn's line to its route shows.
   const spawnSector: { polygon: number[][]; color: RGBA }[] = [];
   const spawnSectorEdges: Edge[] = [];
   const spawnArrows: { position: number[]; angle: number; color: RGBA }[] = [];
   if (selectedTarget?.scope === "spawn") {
     const r: any = preview.spawn_regions[selectedTarget.index];
-    if (r?.bounding_box) {
+    if (r?.bounding_box && !r.heading_toward_route) {
       const bb = r.bounding_box;
       const cLat = (bb.lat_min + bb.lat_max) / 2;
       const cLon = (bb.lon_min + bb.lon_max) / 2;

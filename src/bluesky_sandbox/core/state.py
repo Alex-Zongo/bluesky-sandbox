@@ -28,6 +28,9 @@ class SpawnPosition:
     # When True, ``spd_kts`` is a provisional placeholder and the real CAS is
     # drawn from the aircraft's flight envelope at ``alt_ft`` post-creation.
     spd_from_envelope: bool = False
+    # When True, ``hdg_deg`` is left to spawn time: toward the first fix of
+    # the aircraft's route, from ``lat_deg`` / ``lon_deg`` (TowardRoute).
+    hdg_toward_route: bool = False
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, float]) -> SpawnPosition:
@@ -38,6 +41,7 @@ class SpawnPosition:
             spd_kts=values["spd_kts"],
             hdg_deg=values.get("hdg_deg"),
             spd_from_envelope=bool(values.get("_spd_from_envelope", False)),
+            hdg_toward_route=bool(values.get("_hdg_toward_route", False)),
         )
 
 

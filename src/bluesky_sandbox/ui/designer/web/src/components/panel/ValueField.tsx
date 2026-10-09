@@ -13,7 +13,7 @@ import { useRefresh } from "../../refresh";
 
 export type SampledValue = number | { type: string; [k: string]: any } | undefined;
 
-type Mode = "fixed" | "range" | "dist" | "envelope" | "start" | "choice";
+type Mode = "fixed" | "range" | "dist" | "envelope" | "start" | "choice" | "toward_route";
 type DistInfo = { name: string; params: string[]; discrete: boolean; unbounded?: boolean; signature: string };
 
 function modeOf(v: SampledValue): Mode {
@@ -23,6 +23,7 @@ function modeOf(v: SampledValue): Mode {
     if (v.type === "envelope") return "envelope";
     if (v.type === "start") return "start";
     if (v.type === "categorical") return "choice";
+    if (v.type === "toward_route") return "toward_route";
   }
   return "fixed";
 }
@@ -172,6 +173,7 @@ export function ValueField({
   altLevels = false,
   allowStart = false,
   allowChoice = false,
+  allowTowardRoute = false,
 }: {
   label: string;
   value: SampledValue;
@@ -189,6 +191,8 @@ export function ValueField({
   // When set, offers a weighted-choice mode: a categorical over *numeric*
   // values (e.g. a count-scale mixture: 90% x1.0, 10% x0.08).
   allowChoice?: boolean;
+  // A spawn heading: may point each aircraft at its route's first fix.
+  allowTowardRoute?: boolean;
 }) {
   const [dists, setDists] = useState<DistInfo[]>([]);
   const refreshKey = useRefresh();
@@ -217,6 +221,7 @@ export function ValueField({
     else if (m === "range") onChange({ type: "range", low: range.low ?? 0, high: range.high ?? 0 });
     else if (m === "envelope") onChange({ type: "envelope" });
     else if (m === "start") onChange({ type: "start" });
+    else if (m === "toward_route") onChange({ type: "toward_route" });
     else if (m === "choice") {
       const seed = Number.isFinite(fixed) ? fixed : 1;
       onChange({ type: "categorical", weights: { [String(seed)]: 1 } });
@@ -280,9 +285,15 @@ export function ValueField({
             ...(allowStart
               ? [{ value: "start", label: "where it starts", description: "the altitude the aircraft starts the leg at: level flight to here" }]
               : []),
+            ...(allowTowardRoute
+              ? [{ value: "toward_route", label: "toward its route", description: "each aircraft pointed at its route's first fix, from where it appears" }]
+              : []),
           ]}
         />
       </div>
+      {mode === "toward_route" && (
+        <div className="muted small">each aircraft pointed at its route's first fix, from where it appears</div>
+      )}
       {mode === "envelope" && (
         <>
           <div className="muted small">sampled per aircraft within the flight envelope</div>

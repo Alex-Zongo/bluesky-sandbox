@@ -42,6 +42,7 @@ import numpy as np
 
 from bluesky_sandbox.sim.bounds import Bounds, LatLon
 
+from .heading import TowardRoute
 from .routes import expand_route_paths
 
 __all__ = [
@@ -64,7 +65,8 @@ class SpawnRequest:
     """One aircraft to spawn: where, at what state, and when.
 
     ``spd_kts`` - CAS; ``None`` draws one its flight envelope allows at
-    ``alt_ft``. ``hdg_deg`` - ``None`` draws one. ``actype`` - ``None`` draws
+    ``alt_ft``. ``hdg_deg`` - ``None`` draws one; :class:`.TowardRoute`
+    points it at the route's first fix. ``actype`` - ``None`` draws
     the spawn config's aircraft type. ``route`` - steps (waypoint names, step
     dicts) or a key into the spawn config's ``routes``; ``None`` leaves it to
     the source. ``time_s`` - seconds into the episode. ``controlled`` - ``None``
@@ -75,7 +77,7 @@ class SpawnRequest:
     at: LatLon
     alt_ft: float
     spd_kts: float | None = None
-    hdg_deg: float | None = None
+    hdg_deg: float | TowardRoute | None = None
     actype: str | None = None
     callsign: str | None = None
     route: Any = None
@@ -306,7 +308,7 @@ def nearest_entry(request: SpawnRequest, ctx: PlanContext) -> str | None:
                 continue
             north = (lat - request.at.lat_deg) * 60.0
             east = (lon - request.at.lon_deg) * 60.0 * math.cos(math.radians(request.at.lat_deg))
-            if request.hdg_deg is not None:
+            if isinstance(request.hdg_deg, (int, float)):
                 bearing = math.degrees(math.atan2(east, north)) % 360.0
                 if abs((bearing - request.hdg_deg + 180.0) % 360.0 - 180.0) > 90.0:
                     continue

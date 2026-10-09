@@ -45,6 +45,8 @@ class WaypointTarget:
     # aircraft is controlled/assigned at altitude) and in CAS below. When None,
     # the constraint stays CAS everywhere (backwards-compatible).
     speed_tolerance_mach: float | None = None
+    # Flown over, not by: the aircraft crosses the fix before it turns.
+    flyover: bool = False
 
 
 @dataclass(frozen=True)
@@ -347,6 +349,11 @@ class Waypoint:
     track_temporal_state:
         Whether this waypoint is sampled every physics substep to provide
         ``during_step``, accumulated ``time``, and step-minimum values.
+    flyover:
+        Whether a route through it flies over it - crossing the fix, then
+        turning onto the next leg - rather than by it, turning early to
+        join the next leg (BlueSky's default). A conventional procedure's
+        "from over" a navaid is one.
     """
 
     lat: float | None = None
@@ -365,6 +372,7 @@ class Waypoint:
     render_tsas: bool | None = None
     render_label: bool = True
     track_temporal_state: bool = False
+    flyover: bool = False
     at: Any = None
 
     @staticmethod
@@ -441,6 +449,7 @@ class Waypoint:
             alt_tolerance_ft=self.alt_tolerance_ft,
             speed_tolerance_kts=self.speed_tolerance_kts,
             speed_tolerance_mach=self.speed_tolerance_mach,
+            flyover=self.flyover,
         )
 
     def _route_index(self, acidx: int, route_idx: int | None = None) -> int | None:
@@ -549,6 +558,7 @@ class Waypoint:
             alt_tolerance_ft=self.alt_tolerance_ft,
             speed_tolerance_kts=self.speed_tolerance_kts,
             speed_tolerance_mach=self.speed_tolerance_mach,
+            flyover=self.flyover,
         )
 
     def current_state(

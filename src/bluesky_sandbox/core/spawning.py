@@ -46,7 +46,8 @@ from bluesky_sandbox.sim.performance.envelope import (
 )
 from bluesky_sandbox.sim.queryables import Waypoint, WaypointTarget
 from bluesky_sandbox.sim.sampling.distributions import Categorical
-from bluesky_sandbox.sim.spawn import PlanContext, SpawnRequest, route_step_name
+from bluesky_sandbox.sim.spawn import PlanContext, SpawnRequest, route_heading, route_step_name
+from bluesky_sandbox.sim.spawn.heading import is_toward_route
 from bluesky_sandbox.sim.spawn.regions import _ENVELOPE_PROVISIONAL_SPD_KTS
 
 from .state import (
@@ -143,8 +144,9 @@ class SpawnGenerator:
                 lon_deg=float(request.at.lon_deg),
                 alt_ft=float(request.alt_ft),
                 spd_kts=float(request.spd_kts) if request.spd_kts is not None else _ENVELOPE_PROVISIONAL_SPD_KTS,
-                hdg_deg=None if request.hdg_deg is None else float(request.hdg_deg),
+                hdg_deg=None if request.hdg_deg is None or is_toward_route(request.hdg_deg) else float(request.hdg_deg),
                 spd_from_envelope=request.spd_kts is None,
+                hdg_toward_route=is_toward_route(request.hdg_deg),
             ),
             callsign_prefix=request.callsign_prefix,
             route=request.route,
@@ -203,7 +205,7 @@ class SpawnGenerator:
             pos = item.position
             if conflict_free:
                 pos = self._resolve_spawn_speed(item.actype, pos, rng)
-            hdg = self._spawn_hdg(pos, rng)
+            hdg = self._spawn_hdg(pos, rng, item.route)
             if self._spawn_position_clear(
                 pos, hdg, conflict_free, sep_nm=sep_nm, sep_ft=sep_ft, lookahead_s=look_s
             ):
@@ -347,10 +349,13 @@ class SpawnGenerator:
             return None
         return self.env.episode_spawn.regions[region_index].callsign_prefixes
 
-    def _spawn_hdg(self, pos: SpawnPosition, rng: np.random.Generator) -> float:
-        """Resolve a candidate's spawn heading (random when unspecified)."""
+    def _spawn_hdg(self, pos: SpawnPosition, rng: np.random.Generator, route=None) -> float:
+        """Resolve a candidate's spawn heading: its own, toward the first fix
+        of its ``route`` (TowardRoute), or - unspecified - random."""
         if pos.hdg_deg is not None:
             return float(pos.hdg_deg) % 360.0
+        if pos.hdg_toward_route:
+            return route_heading(pos.lat_deg, pos.lon_deg, route, self.env.episode_queryables)
         return float(rng.uniform(0.0, 360.0))
 
     def _spawn_position_clear(
@@ -599,6 +604,7 @@ class SpawnGenerator:
             reach_radius_nm=target.reach_radius_nm,
             alt_tolerance_ft=target.alt_tolerance_ft,
             speed_tolerance_kts=target.speed_tolerance_kts,
+            flyover=target.flyover,
         )
         if resolved_target.speed_kts is not None and resolved_target.alt_ft is None:
             raise ValueError(
@@ -664,11 +670,7 @@ class SpawnGenerator:
             )
         )
         used.add(callsign)
-        hdg = (
-            float(item.position.hdg_deg) % 360.0
-            if item.position.hdg_deg is not None
-            else float(rng.uniform(0.0, 360.0))
-        )
+        hdg = self._spawn_hdg(item.position, rng, item.route)
         # bs.traf.cre() writes acalt/acspd straight into self.alt (m) and
         # feeds acspd into vcasormach() (m/s).
         # Spawn params use ft / kts, so convert here.

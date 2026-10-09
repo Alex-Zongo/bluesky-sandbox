@@ -73,6 +73,7 @@ from bluesky_sandbox.sim.bounds.altitude import AltitudeBand
 from bluesky_sandbox.sim.bounds.generators import GeneratedFootprint, ShapeGenerator
 from bluesky_sandbox.sim.bounds.footprints import ShapelyFootprint
 from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
+from bluesky_sandbox.sim.spawn.heading import TowardRoute
 from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
 from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
@@ -199,6 +200,8 @@ def dump_value(v: Any) -> Any:
     """
     if v is None or isinstance(v, (bool, int, float, str)):
         return v
+    if isinstance(v, TowardRoute):
+        return {"type": "toward_route"}
     if isinstance(v, EnvelopeSample):
         out: dict[str, Any] = {"type": "envelope"}
         if v.alt_floor_ft != 1000.0:
@@ -266,6 +269,8 @@ def load_value(d: Any) -> Any:
                 lo, hi = _pf(d["bounds"][0]), _pf(d["bounds"][1])
                 return Bounded(dist, lo, hi, mode=d.get("mode", "truncate"))
             return dist
+        if t == "toward_route":
+            return TowardRoute()
         if t == "envelope":
             step = d.get("alt_step_ft")
             return EnvelopeSample(
@@ -845,6 +850,8 @@ def _queryable_dump(q: Queryable) -> dict[str, Any]:
         out["render_shape"] = q.render_shape
         out["render_label"] = q.render_label
         out["track_temporal_state"] = q.track_temporal_state
+        if q.flyover:
+            out["flyover"] = True
         return out
     raise SpecError(
         f"cannot serialize queryable of type {type(q).__name__}; custom "
@@ -907,6 +914,7 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
             render_tsas=d.get("render_tsas"),
             render_label=d.get("render_label", True),
             track_temporal_state=d.get("track_temporal_state", False),
+            flyover=d.get("flyover", False),
         )
     raise SpecError(f"unknown queryable type {t!r}")
 

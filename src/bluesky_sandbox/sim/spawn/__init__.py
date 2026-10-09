@@ -8,6 +8,7 @@ here, so the import path is unchanged.
 
 from __future__ import annotations
 
+from .heading import TowardRoute, route_heading
 from .regions import (
     SpawnConfig,
     SpawnRegion,
@@ -43,6 +44,7 @@ __all__ = [
     "Replay",
     "SpawnRequest",
     "SpawnSource",
+    "TowardRoute",
     "nearest_entry",
     "RouteSpec",
     "RouteStep",
@@ -51,6 +53,7 @@ __all__ = [
     "expand_route_paths",
     "param_alt_range",
     "resolve_route",
+    "route_heading",
     "route_step_name",
     "route_step_names",
     "sample_route_path",

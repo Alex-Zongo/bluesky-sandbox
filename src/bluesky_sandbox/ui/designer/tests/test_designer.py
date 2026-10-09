@@ -53,6 +53,7 @@ from bluesky_sandbox.sim.bounds import (
     VertexAltitudeBand,
 )
 from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
+from bluesky_sandbox.sim.spawn import TowardRoute
 from bluesky_sandbox.sim.queryables import (
     QueryRegion,
     RegionResult,
@@ -725,6 +726,25 @@ def test_envelope_value_waypoint():
     assert "'sample_alt_from_envelope': True" in scenario_py
     assert "'sample_speed_from_envelope': True" in scenario_py
     print("  envelope-value waypoint: route metadata + codegen OK")
+
+
+def test_a_fix_flown_over_and_a_spawn_headed_at_its_route():
+    spec = _example_design_spec()
+    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0, "flyover": True}}
+    spec.spawn["route"] = ["goal"]
+    for region in spec.spawn["regions"]:
+        region["params"]["hdg_deg"] = {"type": "toward_route"}
+    rt = S.DesignSpec.from_json(spec.to_json())
+    assert rt.queryables["goal"]["flyover"] is True
+    assert rt.spawn["regions"][0]["params"]["hdg_deg"] == {"type": "toward_route"}
+    support = build_scenario(spec).support()
+    assert support.queryables["goal"].flyover is True
+    assert isinstance(support.spawn.regions[0].params["hdg_deg"], TowardRoute)
+    files = codegen.generate_task(spec, "Over The Fix")
+    scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
+    assert "flyover=True" in scenario_py
+    assert "'hdg_deg': TowardRoute()" in scenario_py
+    assert "from bluesky_sandbox.sim.spawn import TowardRoute" in scenario_py
 
 
 def test_active_route_waypoint_fields_cataloged():

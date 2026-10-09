@@ -41,6 +41,16 @@ Manages spatial spawn volumes, arrival distributions, and episode aircraft spawn
    :show-inheritance:
 ```
 
+## `bluesky_sandbox.sim.spawn.heading`
+
+A spawn heading taken from the aircraft's route: toward its first fix, from where it appears.
+
+```{eval-rst}
+.. automodule:: bluesky_sandbox.sim.spawn.heading
+   :members:
+   :show-inheritance:
+```
+
 ## `bluesky_sandbox.sim.spawn.routes`
 
 Defines the route-specification for flight paths assigned to newly spawned aircraft.

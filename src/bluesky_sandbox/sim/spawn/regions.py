@@ -35,6 +35,7 @@ from bluesky_sandbox.sim.sampling.distributions import (
     TypeDistribution,
 )
 
+from .heading import TowardRoute, is_toward_route
 from .routes import RouteSpec, RouteStep, sample_route_path
 from .sources import PlanContext, PlannedSpawn, SpawnRequest
 
@@ -131,6 +132,10 @@ class SpawnRegion:
         * a ``(low, high)`` tuple - samples uniformly over ``[low, high]``,
         * or a frozen ``scipy.stats`` continuous distribution - calls
           ``dist.rvs(random_state=rng)`` each spawn.
+
+        ``"hdg_deg"`` is optional (uniform 0-360 without); it may also be
+        :class:`~bluesky_sandbox.sim.spawn.heading.TowardRoute`, pointing each
+        aircraft at its route's first fix from where it appears.
     aircraft_type:
         The aircraft types it spawns: a fixed ICAO string, or any
         :class:`TypeDistribution` (e.g. a :class:`Categorical` of types and
@@ -263,6 +268,10 @@ class SpawnRegion:
             )
         for key, value in self.params.items():
             label = f"SpawnRegion.params[{key!r}]"
+            if is_toward_route(value):
+                if key != "hdg_deg":
+                    raise ValueError(f"{label} can only use TowardRoute for 'hdg_deg'.")
+                continue
             if _is_envelope_sample(value):
                 if key not in ("alt_ft", "spd_kts"):
                     raise ValueError(
@@ -388,6 +397,11 @@ class SpawnRegion:
         """Sample spawn parameters for one aircraft in this region."""
         pos = {}
         for k, v in self.params.items():
+            if is_toward_route(v):
+                # Known once the aircraft's route is: where it appears and
+                # its first fix (see route_heading).
+                pos["_hdg_toward_route"] = True
+                continue
             if _is_envelope_sample(v):
                 if actype is None:
                     raise ValueError(
@@ -545,6 +559,11 @@ class SpawnConfig:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(
                     f"SpawnConfig.{name} must be a positive integer, got {value!r}."
+                )
+        for i, region in enumerate(self.regions):
+            if is_toward_route(region.params.get("hdg_deg")) and region.route is None and self.route is None:
+                raise ValueError(
+                    f"Spawn region {region.name or i} heads toward its route (TowardRoute) but has no route."
                 )
         # Region indices already warned about a below-CD separation, so a
         # per-step top-up does not repeat itself every spawn.
@@ -760,7 +779,7 @@ class SpawnConfig:
             alt_ft=float(pos["alt_ft"]),
             # Drawn from its envelope once the aircraft's performance is known.
             spd_kts=None if pos.get("_spd_from_envelope") else float(pos["spd_kts"]),
-            hdg_deg=pos.get("hdg_deg"),
+            hdg_deg=TowardRoute() if pos.get("_hdg_toward_route") else pos.get("hdg_deg"),
             actype=actype,
             route=route,
             time_s=float(time_s),
