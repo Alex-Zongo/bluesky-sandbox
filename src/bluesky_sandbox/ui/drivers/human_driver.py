@@ -31,13 +31,30 @@ window is BlueSky's own QtGL client.
 from __future__ import annotations
 
 import time
+from typing import NamedTuple
 
 import bluesky as bs
 
 from bluesky_sandbox.sim.spawn import expand_route_paths
+from bluesky_sandbox.sim.spawn.regions import param_alt_range
 
 from .common import DISPLAY_TOGGLES, DisplayToggle, PrimitiveDrawMixin, TrailMixin
+from .common.route_heights import route_heights
 from .sim_driver import SimDriver
+
+
+class RoutePoint(NamedTuple):
+    """A point of a design's route as it is drawn: a fix's own altitude, or -
+    where it has none - the height it is drawn at between the fixes that have
+    one (``inferred``; see :func:`.common.route_heights.route_heights`)."""
+
+    lat: float
+    lon: float
+    alt_ft: float | None
+    inferred: bool
+    #: The fix's name, to label it by; ``None`` where the point is no fix (a
+    #: spawn's center) or the fix is not to be labelled (``render_label``).
+    name: str | None = None
 
 
 class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
@@ -257,19 +274,19 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
             self.VO_HORIZON_FRAC_MIN, min(1.0, float(frac))
         )
 
-    def defined_route_polylines(self) -> list[list[tuple[float, float, float | None]]]:
+    def defined_route_polylines(self) -> list[list[RoutePoint]]:
         """Polylines for the design's *defined* routes (static for the episode).
 
         These come from the scenario's route definitions + waypoint positions
         (not a live per-aircraft route), so they don't change during the episode
         and are resolved once and cached (cleared on reset). Returns a list of
-        routes, each an ordered list of ``(lat, lon, alt_ft)`` points.
+        routes, each an ordered list of :class:`RoutePoint`.
         """
         cached = getattr(self, "_defined_routes_cache", None)
         if cached is not None:
             return cached
 
-        polylines: list[list[tuple[float, float, float | None]]] = []
+        polylines: list[list[RoutePoint]] = []
         env = getattr(self, "_env", None)
         if env is not None:
             spawn = env.episode_spawn
@@ -283,30 +300,74 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
 
             seen: set[tuple] = set()
             for spec in specs:
-                # A branching route (STAR/SID transitions) expands to one path
-                # per branch, so the whole network draws, not just one limb.
-                try:
-                    paths = expand_route_paths(spec, routes_lib)
-                except Exception:
-                    continue
-                for names in paths:
-                    pts: list[tuple[float, float, float | None]] = []
-                    for name in names:
-                        wp = queryables.get(name)
-                        lat = getattr(wp, "lat", None)
-                        lon = getattr(wp, "lon", None)
-                        if lat is None or lon is None:
-                            continue
-                        pts.append((float(lat), float(lon), getattr(wp, "alt_ft", None)))
+                for pts in self._route_paths(spec, routes_lib, queryables):
                     if len(pts) < 2:
                         continue
-                    key = tuple((round(lat, 6), round(lon, 6)) for lat, lon, _ in pts)
+                    key = tuple((round(p[0], 6), round(p[1], 6)) for p in pts)
                     if key not in seen:
                         seen.add(key)
                         polylines.append(pts)
+            # From each spawn to where its route begins, so a route reads from
+            # where its aircraft appear - as the designer's map draws it: from
+            # the middle of the band they spawn into, else at the route's
+            # height there. Either is no constraint: inferred.
+            for region in spawn.regions:
+                band = param_alt_range(region.params.get("alt_ft"))
+                center = region.bounds.footprint.center_point()
+                for entry in self._route_entries(region.route, routes_lib, queryables):
+                    alt_ft = 0.5 * (band[0] + band[1]) if band is not None else entry.alt_ft
+                    start = RoutePoint(float(center.lat_deg), float(center.lon_deg), alt_ft, alt_ft is not None)
+                    polylines.append([start, entry])
 
         self._defined_routes_cache = polylines
         return polylines
+
+    def defined_route_fixes(self) -> list[RoutePoint]:
+        """Each named fix of the design's defined routes, once - where it is
+        drawn - to label: a fix on several routes is one fix, and one on the
+        tracked aircraft's route is left to that route's own label."""
+        tracked = self.tracked_acid()
+        named = {wp.get("name") for wp in self.aircraft_route_waypoints(tracked)} if tracked is not None else set()
+        fixes: dict[str, RoutePoint] = {}
+        for pts in self.defined_route_polylines():
+            for p in pts:
+                if p.name is not None and p.name not in named:
+                    fixes.setdefault(p.name, p)
+        return list(fixes.values())
+
+    @staticmethod
+    def _route_paths(spec, routes_lib, queryables) -> list[list[RoutePoint]]:
+        """Each path ``spec`` may take - a branching route (STAR/SID
+        transitions) one per branch, so the whole network draws - as its fixes'
+        :class:`RoutePoint`."""
+        try:
+            paths = expand_route_paths(spec, routes_lib)
+        except Exception:
+            return []
+        out = []
+        for names in paths:
+            fixes = [(name, queryables.get(name)) for name in names]
+            fixes = [(n, wp) for n, wp in fixes if getattr(wp, "lat", None) is not None and getattr(wp, "lon", None) is not None]
+            at = [(float(wp.lat), float(wp.lon)) for _, wp in fixes]
+            heights, inferred = route_heights(at, [getattr(wp, "alt_ft", None) for _, wp in fixes])
+            labels = [n if getattr(wp, "render_label", True) else None for n, wp in fixes]
+            out.append([RoutePoint(lat, lon, h, f, n) for (lat, lon), h, f, n in zip(at, heights, inferred, labels, strict=True)])
+        return out
+
+    @classmethod
+    def _route_entries(cls, route, routes_lib, queryables) -> list[RoutePoint]:
+        """Where each path ``route`` may take begins - a route given inline, by
+        name, or a choice of names - as it is drawn."""
+        if route is None:
+            return []
+        names = route.weights if hasattr(route, "weights") else [route] if isinstance(route, str) else None
+        specs = [routes_lib[n] for n in names if n in routes_lib] if names is not None else [route]
+        out = []
+        for spec in specs:
+            for path in cls._route_paths(spec, routes_lib, queryables):
+                if path and path[0] not in out:
+                    out.append(path[0])
+        return out
 
     def on_reset(self, env=None) -> None:
         """Cache env, wipe any accumulated trails, dispatch renderables.

@@ -164,6 +164,10 @@ class PointFootprint(Footprint):
     def vertices(self) -> list[tuple[float, float]]:
         return [(self.center.lat_deg, self.center.lon_deg)]
 
+    @property
+    def is_point(self) -> bool:
+        return True
+
     def contains(self, lat_deg: float, lon_deg: float) -> bool:
         del lat_deg, lon_deg
         return False

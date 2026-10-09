@@ -359,6 +359,11 @@ class MovingFootprint(Footprint):
         return self._current.bounding_box
 
     @property
+    def is_point(self) -> bool:
+        # Where it is now: a moving point is still a point.
+        return self.footprint.is_point
+
+    @property
     def vertices(self):
         return self._current.vertices
 

@@ -58,6 +58,11 @@ export type RoutePath = {
   name: string;
   color: RGBA;
   points: [number, number, number][];
+  // The fix at each point.
+  names: string[];
+  // Per point: whether its height is inferred - a fix with no altitude of
+  // its own, placed between the fixes that have one (see routeHeights).
+  inferred: boolean[];
 };
 
 // View-only visibility: which element categories are shown, and which individual

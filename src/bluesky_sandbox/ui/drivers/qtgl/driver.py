@@ -211,7 +211,7 @@ class QtGLSimDriver(HumanSimDriver):
         self._clear_defined_routes()
         for i, pts in enumerate(self.defined_route_polylines()):
             name = f"ROUTE_{i}"
-            coords = " ".join(f"{lat},{lon}" for lat, lon, _ in pts)
+            coords = " ".join(f"{p.lat},{p.lon}" for p in pts)
             bs.stack.stack(f"POLYLINE {name} {coords}")
             bs.stack.stack(f"COLOR {name} cyan")
             self._route_shape_names.append(name)

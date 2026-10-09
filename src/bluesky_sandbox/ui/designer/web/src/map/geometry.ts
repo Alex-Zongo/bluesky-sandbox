@@ -719,19 +719,66 @@ export function spawnRouteLinks(
 ): { src: [number, number, number]; tgt: [number, number, number]; spawnIndex: number; routeKey: string }[] {
   if (!spec || !preview) return [];
   const positions = waypointPositions(spec, preview);
+  // Where each route starts, as it is drawn: its entry fix at the route's
+  // height there (its own altitude, or the one inferred - see routeHeights).
+  const entryAt = new Map<string, [number, number, number]>();
+  for (const r of routePaths(spec, preview)) entryAt.set(`${r.key}|${r.names[0]}`, r.points[0]);
   const links: { src: [number, number, number]; tgt: [number, number, number]; spawnIndex: number; routeKey: string }[] = [];
   (spec.spawn?.regions ?? []).forEach((region: any, index: number) => {
     const sr: any = preview.spawn_regions?.[index];
     if (!sr?.vertices?.length) return;
     const [olon, olat] = centroid(sr.vertices);
+    // From the middle of the band aircraft spawn into, else at the route's
+    // height where it begins (as the drivers draw it).
+    const band = Number.isFinite(sr.alt_min_ft) && Number.isFinite(sr.alt_max_ft);
     for (const { key, entries } of spawnRouteKeys(region, index, spec)) {
       for (const name of entries) {
-        const p = positions.get(name);
-        if (p) links.push({ src: [olon, olat, 0], tgt: p, spawnIndex: index, routeKey: key });
+        const p = entryAt.get(`${key}|${name}`) ?? positions.get(name);
+        const z = band ? ((sr.alt_min_ft + sr.alt_max_ft) / 2) * FT_TO_M : p?.[2];
+        if (p) links.push({ src: [olon, olat, z ?? 0], tgt: p, spawnIndex: index, routeKey: key });
       }
     }
   });
   return links;
+}
+
+// A waypoint's altitude, ft, where it states one: its constraint - or, for one
+// whose altitude each aircraft draws from its envelope, the preview's
+// representative one. Null for a fix with no altitude.
+function waypointAltFt(spec: SpecDict, preview: PreviewResult, name: string): number | null {
+  const q: any = preview.queryables.find((x) => x.kind === "waypoint" && x.name === name);
+  const own = q ? (q.alt_ft ?? q.display_alt_ft) : repValue(spec.queryables?.[name]?.alt_ft);
+  return Number.isFinite(own) ? Number(own) : null;
+}
+
+// Each point's height along a route, m: a fix's own altitude where it states
+// one; between two that do, interpolated by distance along the route; before
+// the first and after the last, level with it. With which are inferred - none
+// is, on a route whose every fix states an altitude; all, on one where none
+// does (and those stay on the ground).
+export function routeHeights(
+  points: [number, number][],
+  altsFt: (number | null)[],
+): { z: number[]; inferred: boolean[] } {
+  const along = [0];
+  for (let i = 1; i < points.length; i++) {
+    const [lon0, lat0] = points[i - 1];
+    const [lon1, lat1] = points[i];
+    const cosLat = Math.cos((((lat0 + lat1) / 2) * Math.PI) / 180);
+    along.push(along[i - 1] + Math.hypot((lon1 - lon0) * cosLat, lat1 - lat0));
+  }
+  const known = altsFt.map((a, i) => (a == null ? -1 : i)).filter((i) => i >= 0);
+  const z = altsFt.map((a, i) => {
+    if (a != null) return zMeters(a) + WAYPOINT_LIFT_M;
+    if (!known.length) return WAYPOINT_LIFT_M;
+    const before = known.filter((k) => k < i).pop();
+    const after = known.find((k) => k > i);
+    if (before == null) return zMeters(altsFt[after!]!) + WAYPOINT_LIFT_M;
+    if (after == null) return zMeters(altsFt[before]!) + WAYPOINT_LIFT_M;
+    const t = (along[i] - along[before]) / (along[after] - along[before] || 1);
+    return zMeters(altsFt[before]! + (altsFt[after]! - altsFt[before]!) * t) + WAYPOINT_LIFT_M;
+  });
+  return { z, inferred: altsFt.map((a) => a == null && known.length > 0) };
 }
 
 export function routePaths(spec: SpecDict | null, preview: PreviewResult | null): RoutePath[] {
@@ -781,14 +828,15 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
     const color = ROUTE_PALETTE[colorIndex++ % ROUTE_PALETTE.length];
     const drawn = new Set<string>();
     for (const path of enumerate(steps)) {
-      const points = collapse(path)
-        .filter((n) => positions.has(n))
-        .map((n) => positions.get(n)!);
-      if (points.length < 2) continue;
-      const ptKey = points.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join("|");
+      const names = collapse(path).filter((n) => positions.has(n));
+      if (names.length < 2) continue;
+      const flat = names.map((n) => [positions.get(n)![0], positions.get(n)![1]] as [number, number]);
+      const ptKey = flat.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join("|");
       if (drawn.has(ptKey)) continue;
       drawn.add(ptKey);
-      out.push({ key, name, color, points });
+      const { z, inferred } = routeHeights(flat, names.map((n) => waypointAltFt(spec, preview, n)));
+      const points = flat.map(([lon, lat], i) => [lon, lat, z[i]] as [number, number, number]);
+      out.push({ key, name, color, points, names, inferred });
     }
   };
 

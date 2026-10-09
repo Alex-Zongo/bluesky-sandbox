@@ -15,6 +15,7 @@ import numpy as np
 
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
+from bluesky_sandbox.sim.spawn.regions import param_alt_range
 
 __all__ = [
     "bounds_geometry",
@@ -130,7 +131,7 @@ def queryable_geometry(name: str, q: Any, *, per_aircraft: bool = False) -> dict
 def spawn_region_geometry(index: int, region: Any) -> dict[str, Any]:
     """A spawn region: its bounds, drawn at the altitude band aircraft spawn
     into, with its name and the initial-heading range for direction arrows."""
-    return {
+    out = {
         "name": region.name or f"SPAWN {index}",
         "render_shape": region.render_shape,
         "render_name": region.render_name,
@@ -139,6 +140,13 @@ def spawn_region_geometry(index: int, region: Any) -> dict[str, Any]:
         "heading": heading_range(region.params.get("hdg_deg")),
         **bounds_geometry(region.shape),
     }
+    # The band aircraft spawn into is their ``alt_ft`` where it is given - as
+    # the drivers draw it - not the shape's own (often unbounded) one.
+    band = param_alt_range(region.params.get("alt_ft"))
+    if band is not None:
+        out["alt_min_ft"], out["alt_max_ft"] = band
+        out.pop("per_vertex_alt_ft", None)
+    return out
 
 
 def episode_geometry(episode: Any, per_aircraft: frozenset[str] = frozenset()) -> dict[str, Any]:

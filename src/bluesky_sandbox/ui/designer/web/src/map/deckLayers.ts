@@ -94,6 +94,18 @@ export function targetTag(t: SpawnTarget): string {
   return [t.waypoint ?? "target", parts.join(" · ")].filter(Boolean).join("\n");
 }
 
+// An inferred route leg: how strongly it is drawn against a solid one, and
+// how many dashes it is cut into (the PathLayer has no dash support).
+const INFERRED_ALPHA = 0.55;
+const LEG_DASHES = 9;
+
+// ``leg`` as LEG_DASHES dashes along it, each half a dash's length.
+function dashed<T extends { points: [number, number, number][] }>(leg: T): T[] {
+  const [p, q] = leg.points;
+  const at = (t: number): [number, number, number] => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+  return Array.from({ length: LEG_DASHES }, (_, d) => ({ ...leg, points: [at(d / LEG_DASHES), at((d + 0.5) / LEG_DASHES)] }));
+}
+
 export const spawnTargetKey = (t: SpawnTarget) => `target:${t.waypoint}:${t.lat.toFixed(5)}:${t.lon.toFixed(5)}:${t.alt_ft}`;
 
 // The targets of every aircraft, each once.
@@ -689,10 +701,26 @@ export function deckLayers(
         };
       }),
     );
+    // Each leg of a route: solid between fixes that state their altitude;
+    // lighter and dashed where a height is inferred (see routeHeights), so an
+    // interpolated height does not read as a constraint.
+    type Leg = RoutePath & { points: [number, number, number][] };
+    const solid: Leg[] = [];
+    const inferred: Leg[] = [];
+    for (const r of visibleRoutes) {
+      for (let i = 0; i + 1 < r.points.length; i++) {
+        const leg = { ...r, points: [r.points[i], r.points[i + 1]] };
+        if (r.inferred[i] || r.inferred[i + 1]) {
+          inferred.push(...dashed(leg));
+        } else {
+          solid.push(leg);
+        }
+      }
+    }
     layers.push(
       new PathLayer({
         id: "route-paths",
-        data: visibleRoutes,
+        data: solid,
         getPath: (d: RoutePath) => d.points,
         getColor: (d: RoutePath) => [d.color[0], d.color[1], d.color[2], alphaFor(d)],
         getWidth: widthFor,
@@ -700,6 +728,18 @@ export function deckLayers(
         widthMinPixels: lw(2),
         capRounded: true,
         jointRounded: true,
+        pickable: true,
+        parameters: { depthTest: false },
+        updateTriggers: { getColor: highlightedRoute, getWidth: [highlightedRoute, lineScale] },
+      }),
+      new PathLayer({
+        id: "route-paths-inferred",
+        data: inferred,
+        getPath: (d: RoutePath) => d.points,
+        getColor: (d: RoutePath) => [d.color[0], d.color[1], d.color[2], Math.round(alphaFor(d) * INFERRED_ALPHA)],
+        getWidth: widthFor,
+        widthUnits: "pixels",
+        widthMinPixels: lw(2),
         pickable: true,
         parameters: { depthTest: false },
         updateTriggers: { getColor: highlightedRoute, getWidth: [highlightedRoute, lineScale] },

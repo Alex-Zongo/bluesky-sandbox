@@ -27,6 +27,8 @@ from bluesky.tools.aero import ft
 
 from bluesky_sandbox.interface.task import WaypointReadoutKey
 from bluesky_sandbox.ui.drivers.common import CursorHint, CursorHintName
+from bluesky_sandbox.ui.drivers.common.route_heights import route_heights
+from bluesky_sandbox.ui.drivers.common.scene import scene_bounds
 from bluesky_sandbox.ui.drivers.panda3d.colors import (
     CHEVRON_NOTCH_FRAC,
     CHEVRON_WING_FRAC,
@@ -41,6 +43,11 @@ from bluesky_sandbox.ui.drivers.panda3d.colors import (
 )
 from bluesky_sandbox.ui.drivers.panda3d.views.base import Panda3DView
 from bluesky_sandbox.ui.drivers.panda3d.views.tags import AircraftTag, AircraftTags
+
+# How opaque a design route's leg is: one between constraints, and one to or
+# from a fix whose height is inferred (it has none of its own).
+_ROUTE_ALPHA = 0.7
+_INFERRED_ROUTE_ALPHA = 0.3
 
 M_PER_NM = 1852.0
 
@@ -103,15 +110,8 @@ class WorldView(Panda3DView):
 
     def on_reset(self, driver: Panda3DSimDriver, env) -> None:
         """Recompute projection, rebuild ground + overlay nodes."""
-        # Pick the projection origin from airspace bounds when set,
-        # otherwise fall back to the union of all spawn regions.
-        airspace = env.episode_airspace_bounds
-        if airspace is not None:
-            (lat_min, lat_max), (lon_min, lon_max) = airspace.bounding_box
-        else:
-            spawn_bb = env.episode_spawn.resolved_bounds
-            lat_min, lat_max = spawn_bb["lat_deg"]
-            lon_min, lon_max = spawn_bb["lon_deg"]
+        # The projection origin: the middle of what is framed (see scene_bounds).
+        (lat_min, lat_max), (lon_min, lon_max) = scene_bounds(env)
 
         self._lat0 = 0.5 * (lat_min + lat_max)
         self._lon0 = 0.5 * (lon_min + lon_max)
@@ -245,8 +245,12 @@ class WorldView(Panda3DView):
             return
         from panda3d.core import LineSegs, TransparencyAttrib, Vec4
 
-        alt_m = (point.alt_ft or 0.0) * ft
+        # One over a range of altitudes is marked at its lowest, the line up
+        # to its highest showing the rest.
+        lo_ft, hi_ft = point.alt_range or (point.alt_ft or 0.0, point.alt_ft or 0.0)
+        alt_m = lo_ft * ft
         ex, ny, up = self._project(point.lat, point.lon, alt_m)
+        top = hi_ft * ft
         # Marker fill is translucent so traffic crossing the merge
         # point stays visible through the sphere.
         rgba_fill = _color(point.color, alpha=0.55)
@@ -268,10 +272,17 @@ class WorldView(Panda3DView):
         ls.drawTo(ex, ny, up)
         pole_np = self._static.attachNewNode(ls.create())
         pole_np.setTransparency(TransparencyAttrib.MAlpha)
+        if top > up:
+            span = LineSegs()
+            span.setColor(Vec4(*rgba_solid))
+            span.setThickness(3.0)
+            span.moveTo(ex, ny, up)
+            span.drawTo(ex, ny, top)
+            self._static.attachNewNode(span.create())
 
         if point.label:
             label = self._attach_label(
-                driver, self._static, point.label, ex, ny, up + radius * 2, rgba_solid
+                driver, self._static, point.label, ex, ny, max(top, up + radius * 2), rgba_solid
             )
             self._static_label_nodes.append(label)
             if not driver.show_labels:
@@ -899,22 +910,27 @@ class WorldView(Panda3DView):
             self._draw_aircraft_route(driver, tracked, with_labels=True)
 
     def _draw_defined_routes(self, driver: Panda3DSimDriver) -> None:
-        """Faint polylines through the design's defined route waypoints."""
+        """Faint polylines through the design's defined route waypoints, each
+        fix named where the route passes it."""
         from panda3d.core import LineSegs, Vec4
 
+        rgb = NAMED_COLORS["cyan"]
         for pts in driver.defined_route_polylines():
             ls = LineSegs()
-            ls.setColor(Vec4(*NAMED_COLORS["cyan"], 0.7))
             ls.setThickness(1.5)
-            first = True
-            for lat, lon, alt_ft in pts:
-                ex, ny, up = self._project(lat, lon, (alt_ft or 0.0) * ft)
-                if first:
-                    ls.moveTo(ex, ny, up)
-                    first = False
-                else:
-                    ls.drawTo(ex, ny, up)
+            # A leg to or from a height inferred (no constraint there) is drawn
+            # fainter than one between constraints.
+            for a, b in zip(pts, pts[1:], strict=False):
+                alpha = _INFERRED_ROUTE_ALPHA if a.inferred or b.inferred else _ROUTE_ALPHA
+                ls.setColor(Vec4(*rgb, alpha))
+                ls.moveTo(*self._project(a.lat, a.lon, (a.alt_ft or 0.0) * ft))
+                ls.drawTo(*self._project(b.lat, b.lon, (b.alt_ft or 0.0) * ft))
             self._frame_root.attachNewNode(ls.create())
+        if not driver.show_labels:
+            return
+        for fix in driver.defined_route_fixes():
+            ex, ny, up = self._project(fix.lat, fix.lon, (fix.alt_ft or 0.0) * ft)
+            self._attach_label(driver, self._frame_root, fix.name, ex, ny, up, (*rgb, _ROUTE_ALPHA), screen_offset=(0.0, 1.4))
 
     def _draw_aircraft_route(
         self, driver: Panda3DSimDriver, acid: str, with_labels: bool
@@ -928,23 +944,24 @@ class WorldView(Panda3DView):
         idx = bs.traf.id.index(acid)
         current_alt_ft = bs.traf.alt[idx] / ft
         future = [wp for wp in waypoints if wp["future"]]
+        # From the aircraft, at its altitude, through what is ahead: a fix with
+        # no constraint at the height between the points on either side.
+        at = [(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]))] + [(wp["lat"], wp["lon"]) for wp in future]
+        heights, inferred = route_heights(at, [current_alt_ft] + [wp["alt_ft"] for wp in future])
+        drawn_alt = {id(wp): h for wp, h in zip(future, heights[1:], strict=True)}
         if future:
             ls = LineSegs()
-            ls.setColor(Vec4(*NAMED_COLORS["magenta"], 0.95))
             ls.setThickness(2.0)
-            ex, ny, up = self._project(
-                bs.traf.lat[idx], bs.traf.lon[idx], bs.traf.alt[idx]
-            )
-            ls.moveTo(ex, ny, up)
-            for wp in future:
-                alt_ft = wp["alt_ft"] if wp["alt_ft"] is not None else current_alt_ft
-                ex, ny, up = self._project(wp["lat"], wp["lon"], alt_ft * ft)
-                ls.drawTo(ex, ny, up)
+            for k in range(len(at) - 1):
+                alpha = _INFERRED_ROUTE_ALPHA if inferred[k] or inferred[k + 1] else 0.95
+                ls.setColor(Vec4(*NAMED_COLORS["magenta"], alpha))
+                ls.moveTo(*self._project(at[k][0], at[k][1], heights[k] * ft))
+                ls.drawTo(*self._project(at[k + 1][0], at[k + 1][1], heights[k + 1] * ft))
             self._frame_root.attachNewNode(ls.create())
 
         radius = max(driver._distance * 0.003, 80.0)
         for wp in waypoints:
-            alt_ft = wp["alt_ft"] if wp["alt_ft"] is not None else current_alt_ft
+            alt_ft = wp["alt_ft"] if wp["alt_ft"] is not None else drawn_alt.get(id(wp), current_alt_ft)
             ex, ny, up = self._project(wp["lat"], wp["lon"], alt_ft * ft)
             rgb = HIGHLIGHT if wp["active"] else NAMED_COLORS["magenta"]
             constraints = wp.get("constraints") or {}

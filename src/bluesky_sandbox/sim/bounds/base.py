@@ -68,6 +68,12 @@ class Footprint(ABC):
         """The bearing it points along (a corridor's, a sector's), or None."""
         return None
 
+    @property
+    def is_point(self) -> bool:
+        """Whether it is a single position - a fix, a spawn on one - with no
+        area: drawn as a point, not outlined."""
+        return False
+
     def mapped(self, point) -> Footprint:
         """This footprint carried through ``point`` (a ``(lat, lon) -> (lat,
         lon)`` map: a rotation, translation, scaling): the same primitive

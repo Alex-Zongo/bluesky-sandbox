@@ -98,6 +98,7 @@ from bluesky_sandbox.ui.drivers.common import (
     ViewPrimitiveFanoutMixin,
     preferred_panda3d_font_path,
 )
+from bluesky_sandbox.ui.drivers.common.scene import scene_bounds
 from bluesky_sandbox.ui.drivers.panda3d.colors import BACKGROUND
 from bluesky_sandbox.ui.drivers.panda3d.hud import PandaHud
 from bluesky_sandbox.ui.drivers.panda3d.views import (
@@ -266,13 +267,7 @@ class Panda3DSimDriver(ViewPrimitiveFanoutMixin, SandboxGUIDriver):
         self._clear_aircraft_snapshot_cache()
         self._defined_routes_cache = None  # episode-static; re-resolve next access
 
-        airspace = self._env.episode_airspace_bounds
-        if airspace is not None:
-            (lat_min, lat_max), (lon_min, lon_max) = airspace.bounding_box
-        else:
-            spawn_bb = self._env.episode_spawn.resolved_bounds
-            lat_min, lat_max = spawn_bb["lat_deg"]
-            lon_min, lon_max = spawn_bb["lon_deg"]
+        (lat_min, lat_max), (lon_min, lon_max) = scene_bounds(self._env)
 
         # Camera distance + focal - fits the airspace diagonal with margin.
         cos_lat0 = math.cos(math.radians(0.5 * (lat_min + lat_max)))

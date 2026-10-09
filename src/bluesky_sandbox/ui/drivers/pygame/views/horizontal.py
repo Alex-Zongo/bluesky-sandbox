@@ -23,6 +23,7 @@ from bluesky_sandbox.ui.drivers.common import (
     CursorHintName,
     ZoomPanViewport,
 )
+from bluesky_sandbox.ui.drivers.common.scene import scene_bounds
 from bluesky_sandbox.ui.drivers.pygame import colors as C
 from bluesky_sandbox.ui.drivers.pygame.views.base import PygameView, StaticLayer
 
@@ -44,6 +45,9 @@ class HorizontalView(PygameView):
     _VECTOR_WIDTH = 2
     _POLY_WIDTH = 3
     _POINT_RADIUS_PX = 6  # half-diagonal of the diamond marker
+    # The span shown, in degrees, around a scene with no extent of its own -
+    # one spawn point and nothing else.
+    _MIN_SPAN_DEG = 0.5
     _ROUTE_POINT_RADIUS_PX = 5
     _PROTECTION_WIDTH = 1
     _HOVER_RADIUS_PX = 18  # cursor proximity radius for aircraft hover
@@ -116,20 +120,14 @@ class HorizontalView(PygameView):
 
     def on_reset(self, driver: PygameSimDriver, env) -> None:
         """Recompute the projection and clear overlay caches."""
-        airspace = env.episode_airspace_bounds
-        if airspace is not None:
-            (lat_min, lat_max), (lon_min, lon_max) = airspace.bounding_box
-        else:
-            spawn_bb = env.episode_spawn.resolved_bounds
-            lat_min, lat_max = spawn_bb["lat_deg"]
-            lon_min, lon_max = spawn_bb["lon_deg"]
+        (lat_min, lat_max), (lon_min, lon_max) = scene_bounds(env)
 
         center_lat = (lat_min + lat_max) / 2
         center_lon = (lon_min + lon_max) / 2
         cos_lat = math.cos(math.radians(center_lat))
 
-        lat_range = (lat_max - lat_min) * self.margin
-        lon_range = (lon_max - lon_min) * self.margin
+        lat_range = max(lat_max - lat_min, self._MIN_SPAN_DEG) * self.margin
+        lon_range = max(lon_max - lon_min, self._MIN_SPAN_DEG) * self.margin
 
         plan_w = max(self.rect.width, 1)
         plan_h = max(self.rect.height, 1)
@@ -160,6 +158,7 @@ class HorizontalView(PygameView):
         # the user's drag-translated slice anchor persists across episodes.
         # Re-clamp it though, so a point that's outside a (possibly new)
         # airspace bbox gets pulled in and the dot stays visible.
+        airspace = env.episode_airspace_bounds
         if self._slice_center_override is not None and airspace is not None:
             (la_min, la_max), (lo_min, lo_max) = airspace.bounding_box
             la, lo = self._slice_center_override
@@ -1032,7 +1031,7 @@ class HorizontalView(PygameView):
         # The tracked aircraft still gets labels + full readout on top.
         tracked = driver.tracked_acid()
         if getattr(driver, "show_all_routes", False):
-            self._draw_defined_routes(canvas, driver)
+            self._draw_defined_routes(canvas, driver, placed)
             for acid in list(bs.traf.id):
                 if acid != tracked:
                     self._draw_one_route(
@@ -1042,16 +1041,23 @@ class HorizontalView(PygameView):
             self._draw_one_route(canvas, driver, tracked, placed, with_labels=True)
 
     def _draw_defined_routes(
-        self, canvas: pygame.Surface, driver: PygameSimDriver
+        self, canvas: pygame.Surface, driver: PygameSimDriver, placed: list[pygame.Rect]
     ) -> None:
-        """Faint polylines through the design's defined route waypoints."""
+        """Faint polylines through the design's defined route waypoints, each
+        fix named."""
         color = C.named("cyan")
         for pts in driver.defined_route_polylines():
-            px = [self.project(lat, lon) for lat, lon, _ in pts]
+            px = [self.project(p.lat, p.lon) for p in pts]
             if len(px) >= 2:
                 pygame.draw.lines(canvas, color, False, px, width=1)
             for x, y in px:
                 pygame.draw.circle(canvas, color, (int(round(x)), int(round(y))), 2, width=1)
+        if not driver.show_labels or driver.font is None:
+            return
+        for fix in driver.defined_route_fixes():
+            x, y = self.project(fix.lat, fix.lon)
+            bg, rect = self._place_label(driver, fix.name, color, placed, (int(x), int(y) - 4))
+            canvas.blit(bg, rect.topleft)
 
     def _draw_one_route(
         self,

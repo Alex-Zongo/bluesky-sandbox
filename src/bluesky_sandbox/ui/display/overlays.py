@@ -87,6 +87,10 @@ class Point(_SelfRenderable):
     label: str = ""
     color: str = "blue"
     meta: dict = field(default_factory=dict)
+    #: ``(lo, hi)`` ft where the point is one position over a range of
+    #: altitudes - a spawn on a fix, at any of its altitudes - drawn as the
+    #: line between them; ``None`` for a point at one altitude (``alt_ft``).
+    alt_range: tuple[float, float] | None = None
 
 
 @dataclass
@@ -161,6 +165,13 @@ class BoundsResource:
 
         meta = {"kind": self.kind, "name": self.label, "bounds": self.bounds}
         meta.update(self.extra_meta)
+
+        # A point - a spawn on a fix - has no area to outline: it is drawn
+        # as a point, where every driver draws points, where it is now.
+        if getattr(getattr(self.bounds, "footprint", None), "is_point", False):
+            ((lat, lon),) = self.bounds.vertices
+            yield Point(lat=float(lat), lon=float(lon), label=self.label, color=self.color, meta=meta, alt_range=alt_range)
+            return
 
         # Sloped bounds expose per-vertex altitudes; carry them through
         # to the primitive so 3D drivers can paint a slanted envelope
