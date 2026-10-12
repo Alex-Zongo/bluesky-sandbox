@@ -44,7 +44,11 @@ export interface PreviewResult {
     render_shape?: boolean;
     render_name?: boolean;
     heading?: [number, number] | null;
+    heading_toward_route?: boolean;
   })[];
+  // Each route's color by its map key (route:<name>, route:__global__,
+  // route:__region_<i>__) - its own or the next default, as the drivers draw it.
+  route_colors?: Record<string, string>;
   // Named regions in the sampled episode's frame (shape draw + rotation), so
   // the map can render per-episode-randomized bounds; keyed by region name.
   // Named regions in this episode. A generated one carries `generated` (the

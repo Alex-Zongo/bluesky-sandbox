@@ -32,7 +32,7 @@ from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
 from bluesky_sandbox.sim.sampling.distributions import (
     sample_scalar,  # re-export: it lived here historically
 )
-from bluesky_sandbox.sim.spawn import SpawnConfig
+from bluesky_sandbox.sim.spawn import SpawnConfig, map_route_steps
 
 # A point map takes (lat_deg, lon_deg) and returns the transformed (lat, lon).
 PointMap = "callable"
@@ -204,7 +204,7 @@ def rotate_spawn(spawn: SpawnConfig, pivot: tuple[float, float], angle_deg: floa
         spawn,
         regions=regions,
         route=rotate_route(spawn.route),
-        routes={name: rotate_route(route) for name, route in spawn.routes.items()},
+        routes={name: map_route_steps(route, rotate_route) for name, route in spawn.routes.items()},
     )
 
 

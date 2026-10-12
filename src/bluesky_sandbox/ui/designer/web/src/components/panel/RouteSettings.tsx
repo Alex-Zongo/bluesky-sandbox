@@ -8,6 +8,8 @@ import type { SpecDict } from "../../api";
 import { NumField } from "../ShapeEditor";
 import { CollapsibleCard, EyeToggle } from "./Section";
 import { Picker } from "./Picker";
+import { ColorPicker } from "./ColorPicker";
+import { type NamedRoute, routeColor, routeSteps, withRouteColor, withRouteSteps } from "../../route/namedRoute";
 
 function waypointRouteFallback(waypointNames: string[]): string[] {
   return waypointNames.length ? [waypointNames[0]] : [];
@@ -535,16 +537,16 @@ export function RouteSettings({
   onFilter?: (s: string) => void;
   onChange: (spawn: SpecDict) => void;
 }) {
-  const routes: Record<string, RouteStep[]> = spawn.routes ?? {};
+  const routes: Record<string, NamedRoute> = spawn.routes ?? {};
   const routeNames = Object.keys(routes);
-  const setRoutes = (nextRoutes: Record<string, RouteStep[]>) => onChange({ ...spawn, routes: nextRoutes });
+  const setRoutes = (nextRoutes: Record<string, NamedRoute>) => onChange({ ...spawn, routes: nextRoutes });
   const renameRoute = (oldName: string, newNameRaw: string) => {
     const newName = newNameRaw.trim();
     if (!newName || newName === oldName || routes[newName]) return;
-    const nextRoutes: Record<string, RouteStep[]> = {};
+    const nextRoutes: Record<string, NamedRoute> = {};
     // Rename the key, and rewrite {route: oldName} subroute steps in every route.
-    for (const [name, steps] of Object.entries(routes)) {
-      nextRoutes[name === oldName ? newName : name] = renameRouteRefs(steps, oldName, newName);
+    for (const [name, route] of Object.entries(routes)) {
+      nextRoutes[name === oldName ? newName : name] = withRouteSteps(route, renameRouteRefs(routeSteps(route), oldName, newName));
     }
     onChange({
       ...spawn,
@@ -554,10 +556,10 @@ export function RouteSettings({
     });
   };
   const removeRoute = (name: string) => {
-    const nextRoutes: Record<string, RouteStep[]> = {};
+    const nextRoutes: Record<string, NamedRoute> = {};
     // Drop the route, and any {route: name} subroute steps that referenced it.
-    for (const [key, steps] of Object.entries(routes)) {
-      if (key !== name) nextRoutes[key] = removeRouteRef(steps, name);
+    for (const [key, route] of Object.entries(routes)) {
+      if (key !== name) nextRoutes[key] = withRouteSteps(route, removeRouteRef(routeSteps(route), name));
     }
     onChange({
       ...spawn,
@@ -589,12 +591,19 @@ export function RouteSettings({
             </>}
           >
             <RouteWaypointPicker
-              route={routes[name] ?? []}
+              route={routeSteps(routes[name])}
               waypointNames={waypointNames}
               routeNames={routeNames}
               selfName={name}
-              onChange={(route) => setRoutes({ ...routes, [name]: route })}
+              onChange={(route) => setRoutes({ ...routes, [name]: withRouteSteps(routes[name], route) })}
             />
+            <label className="numfield inline">
+              <span>color</span>
+              <ColorPicker
+                value={routeColor(routes[name])}
+                onChange={(color) => setRoutes({ ...routes, [name]: withRouteColor(routes[name], color) })}
+              />
+            </label>
           </CollapsibleCard>
         </div>
       ))}

@@ -911,11 +911,12 @@ class WorldView(Panda3DView):
 
     def _draw_defined_routes(self, driver: Panda3DSimDriver) -> None:
         """Faint polylines through the design's defined route waypoints, each
-        fix named where the route passes it."""
+        in its route's color, each fix named where the route passes it."""
         from panda3d.core import LineSegs, Vec4
 
-        rgb = NAMED_COLORS["cyan"]
-        for pts in driver.defined_route_polylines():
+        for route in driver.defined_route_polylines():
+            rgb = _color(route.color)[:3]
+            pts = route.points
             ls = LineSegs()
             ls.setThickness(1.5)
             # A leg to or from a height inferred (no constraint there) is drawn
@@ -928,9 +929,9 @@ class WorldView(Panda3DView):
             self._frame_root.attachNewNode(ls.create())
         if not driver.show_labels:
             return
-        for fix in driver.defined_route_fixes():
+        for fix, color in driver.defined_route_fixes():
             ex, ny, up = self._project(fix.lat, fix.lon, (fix.alt_ft or 0.0) * ft)
-            self._attach_label(driver, self._frame_root, fix.name, ex, ny, up, (*rgb, _ROUTE_ALPHA), screen_offset=(0.0, 1.4))
+            self._attach_label(driver, self._frame_root, fix.name, ex, ny, up, _color(color, alpha=_ROUTE_ALPHA), screen_offset=(0.0, 1.4))
 
     def _draw_aircraft_route(
         self, driver: Panda3DSimDriver, acid: str, with_labels: bool
@@ -1049,7 +1050,8 @@ class WorldView(Panda3DView):
             if alt_tol_ft is not None:
                 label_lines.append(f"TOL  +/-{int(round(float(alt_tol_ft)))} FT")
             label = "\n".join(label_lines)
-            if with_labels and label:
+            # A waypoint whose label the design turned off (render_label) keeps its mark only.
+            if with_labels and label and wp.get("render_label", True):
                 self._attach_label(
                     driver,
                     self._frame_root,

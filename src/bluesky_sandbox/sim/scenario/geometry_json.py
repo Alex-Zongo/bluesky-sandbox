@@ -15,6 +15,7 @@ import numpy as np
 
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
+from bluesky_sandbox.sim.spawn import route_colors
 from bluesky_sandbox.sim.spawn.heading import is_toward_route
 from bluesky_sandbox.sim.spawn.regions import param_alt_range
 
@@ -23,6 +24,7 @@ __all__ = [
     "episode_geometry",
     "heading_range",
     "queryable_geometry",
+    "route_color_map",
     "spawn_region_geometry",
 ]
 
@@ -152,6 +154,18 @@ def spawn_region_geometry(index: int, region: Any) -> dict[str, Any]:
     return out
 
 
+def route_color_map(spawn: Any) -> dict[str, str]:
+    """Each route's color (:func:`~bluesky_sandbox.sim.spawn.route_colors`),
+    by the key a map draws it under: ``route:<name>`` for a named route,
+    ``route:__global__`` for the global one, ``route:__region_<i>__`` for one
+    given inline on spawn region ``i`` - in the drivers' order."""
+    keys = [f"route:{name}" for name in spawn.routes]
+    if isinstance(spawn.route, (list, tuple)):
+        keys.append("route:__global__")
+    keys.extend(f"route:__region_{i}__" for i, r in enumerate(spawn.regions) if isinstance(r.route, (list, tuple)))
+    return dict(zip(keys, route_colors(spawn.routes, extra=len(keys) - len(spawn.routes)), strict=True))
+
+
 def episode_geometry(episode: Any, per_aircraft: frozenset[str] = frozenset()) -> dict[str, Any]:
     """An episode's airspace, queryables and spawn regions. ``per_aircraft``
     names the waypoints sampled per aircraft, whose template point is not one."""
@@ -168,4 +182,5 @@ def episode_geometry(episode: Any, per_aircraft: frozenset[str] = frozenset()) -
         "spawn_regions": [
             spawn_region_geometry(i, region) for i, region in enumerate(episode.spawn.regions)
         ],
+        "route_colors": route_color_map(episode.spawn),
     }

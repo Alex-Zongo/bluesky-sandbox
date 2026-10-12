@@ -74,6 +74,7 @@ from bluesky_sandbox.sim.bounds.generators import GeneratedFootprint, ShapeGener
 from bluesky_sandbox.sim.bounds.footprints import ShapelyFootprint
 from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
 from bluesky_sandbox.sim.spawn.heading import TowardRoute
+from bluesky_sandbox.sim.spawn.routes import Route
 from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
 from bluesky_sandbox.sim.sampling.distributions import Bounded, Categorical
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
@@ -998,6 +999,35 @@ def _types_onto_regions(d: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
+def _route_dump(route: Any) -> Any:
+    """A named route: its steps, or - with a color - ``{"type": "route",
+    "steps": [...], "color": ...}``."""
+    if isinstance(route, Route):
+        if route.color is None:
+            return list(route.steps)
+        return {"type": "route", "steps": list(route.steps), "color": route.color}
+    return list(route)
+
+
+def _route_load(d: Any) -> Any:
+    if is_route_value(d):
+        return Route(list(d["steps"]), d.get("color"))
+    return list(d)
+
+
+def is_route_value(v: Any) -> bool:
+    """True when ``v`` is a named route written with more than its steps."""
+    return isinstance(v, dict) and v.get("type") == "route"
+
+
+def with_route_steps(route: Any, fn: Any) -> Any:
+    """A named route as the spec writes it, with ``fn`` applied to its steps
+    - a ``{"type": "route"}`` kept one, its color kept."""
+    if is_route_value(route):
+        return {**route, "steps": fn(route.get("steps", []))}
+    return fn(route)
+
+
 def _spawn_config_dump(c: SpawnConfig) -> dict[str, Any]:
     return {
         "type": "spawn_config",
@@ -1005,7 +1035,7 @@ def _spawn_config_dump(c: SpawnConfig) -> dict[str, Any]:
         # Each region names its own types; the deprecated global only when set.
         **({} if c.aircraft_type is None else {"aircraft_type": dump_value(c.aircraft_type)}),
         "route": dump_value(c.route),
-        "routes": {k: list(v) for k, v in c.routes.items()},
+        "routes": {k: _route_dump(v) for k, v in c.routes.items()},
         "conflict_free_spawn": c.conflict_free_spawn,
         "spawn_sep_nm": c.spawn_sep_nm,
         "spawn_sep_ft": c.spawn_sep_ft,
@@ -1021,7 +1051,7 @@ def _spawn_config_load(d: dict[str, Any]) -> SpawnConfig:
         regions=[_spawn_region_load(r) for r in d["regions"]],
         aircraft_type=load_value(d.get("aircraft_type")),
         route=load_value(d.get("route")),
-        routes={k: list(v) for k, v in d.get("routes", {}).items()},
+        routes={k: _route_load(v) for k, v in d.get("routes", {}).items()},
         conflict_free_spawn=d.get("conflict_free_spawn", False),
         spawn_sep_nm=d.get("spawn_sep_nm"),
         spawn_sep_ft=d.get("spawn_sep_ft"),

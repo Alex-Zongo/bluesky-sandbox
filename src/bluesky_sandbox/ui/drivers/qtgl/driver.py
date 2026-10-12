@@ -209,11 +209,11 @@ class QtGLSimDriver(HumanSimDriver):
     def _draw_defined_routes(self) -> None:
         """Stack ``POLYLINE``/``COLOR`` for each of the design's defined routes."""
         self._clear_defined_routes()
-        for i, pts in enumerate(self.defined_route_polylines()):
+        for i, route in enumerate(self.defined_route_polylines()):
             name = f"ROUTE_{i}"
-            coords = " ".join(f"{p.lat},{p.lon}" for p in pts)
+            coords = " ".join(f"{p.lat},{p.lon}" for p in route.points)
             bs.stack.stack(f"POLYLINE {name} {coords}")
-            bs.stack.stack(f"COLOR {name} cyan")
+            bs.stack.stack(f"COLOR {name} {route.color}")
             self._route_shape_names.append(name)
         simstack.process()
 

@@ -36,7 +36,7 @@ from bluesky_sandbox.sim.sampling.distributions import (
 )
 
 from .heading import TowardRoute, is_toward_route
-from .routes import RouteSpec, RouteStep, sample_route_path
+from .routes import Route, RouteSpec, RouteStep, sample_route_path
 from .sources import PlanContext, PlannedSpawn, SpawnRequest
 
 _SPAWN_BOUND_KEYS = ("lat_deg", "lon_deg", "alt_ft", "spd_kts")
@@ -479,7 +479,9 @@ class SpawnConfig:
         a named route key from ``routes``, or a distribution that samples one
         of those route keys.
     routes:
-        Optional named route library used by string/distribution route specs.
+        Optional named route library used by string/distribution route specs:
+        each a list of steps, or a :class:`~.routes.Route` - its steps with
+        the color it is drawn in.
     conflict_free_spawn:
         Global default for conflict-free spawning, applied to any region that
         leaves its own ``SpawnRegion.conflict_free_spawn`` unset (``None``). When
@@ -507,7 +509,7 @@ class SpawnConfig:
     regions:       list[SpawnRegion]
     aircraft_type: str | TypeDistribution | None = None
     route:         RouteSpec | str | TypeDistribution | None = None
-    routes:        dict[str, RouteSpec] = field(default_factory=dict)
+    routes:        dict[str, RouteSpec | Route] = field(default_factory=dict)
     conflict_free_spawn: bool = False
     # What a spawn must actually clear, as absolute values - not a buffer over
     # something else, so the number you write is the number enforced:

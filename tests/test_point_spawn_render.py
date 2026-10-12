@@ -21,7 +21,7 @@ from bluesky_sandbox.sim.scenario.geometry_json import spawn_region_geometry
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 from bluesky_sandbox.ui.display.overlays import BoundsResource, Point, Polygon
 from bluesky_sandbox.ui.drivers.common.route_heights import route_heights
-from bluesky_sandbox.ui.drivers.human_driver import RoutePoint
+from bluesky_sandbox.ui.drivers.human_driver import DefinedRoute, RoutePoint
 
 pytest.importorskip("pygame")
 
@@ -90,12 +90,12 @@ def test_the_designs_route_is_drawn_from_its_spawn_at_its_heights(env):
         RoutePoint(39.414472, -74.454744, 18_000.0, True, "BOTON"),
         RoutePoint(39.582847, -74.270575, 18_000.0, False, "HOGGS"),
     ]
-    assert polylines[0] == route
+    assert polylines[0] == DefinedRoute(route, "cyan")  # the first default
     # From the middle of the band over SIE aircraft spawn into, to where the
-    # route begins.
-    assert polylines[1] == [RoutePoint(_FIX.lat_deg, _FIX.lon_deg, 21_500.0, True), route[0]]
+    # route begins - in its route's color.
+    assert polylines[1] == DefinedRoute([RoutePoint(_FIX.lat_deg, _FIX.lon_deg, 21_500.0, True), route[0]], "cyan")
     # Each fix named once, where it is drawn; the spawn's center is no fix.
-    assert env._driver.defined_route_fixes() == route
+    assert env._driver.defined_route_fixes() == [(p, "cyan") for p in route]
 
 
 def test_a_fix_with_no_altitude_is_drawn_between_those_that_have_one():

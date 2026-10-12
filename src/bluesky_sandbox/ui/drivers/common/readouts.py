@@ -393,6 +393,7 @@ class AircraftReadoutMixin:
                         "active": wp_idx == active_idx,
                         "reached": reached,
                         "future": wp_idx >= active_idx and not reached,
+                        "render_label": self._route_label_shown(name, lat, lon),
                     }
                 )
 
@@ -405,6 +406,25 @@ class AircraftReadoutMixin:
                 bucket[item.key] = item.value
 
         return waypoints
+
+    def _route_label_shown(self, name: str, lat: float, lon: float) -> bool:
+        """Whether a route fix is labelled: its waypoint's ``render_label`` -
+        the waypoint named so, else (a fix BlueSky named itself, given by
+        position) the one there - and labelled where it is no design's."""
+        queryables = getattr(self._env, "episode_queryables", None) or {}
+        wp = queryables.get(name)
+        if wp is None:
+            wp = next(
+                (
+                    q
+                    for q in queryables.values()
+                    if getattr(q, "lat", None) is not None
+                    and abs(float(q.lat) - lat) < 1e-6
+                    and abs(float(q.lon) - lon) < 1e-6
+                ),
+                None,
+            )
+        return bool(getattr(wp, "render_label", True))
 
     @staticmethod
     def _readout_target_waypoint(

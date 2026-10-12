@@ -26,6 +26,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import type { SpecDict } from "../api";
 import { Picker } from "../components/panel/Picker";
+import { ColorPicker } from "../components/panel/ColorPicker";
+import { type NamedRoute, routeColor, routeSteps, withRouteColor, withRouteSteps } from "./namedRoute";
 import RouteMap from "./RouteMap";
 import { Resizer, useStoredSize } from "../components/Resizer";
 import {
@@ -132,7 +134,7 @@ export default function RouteTab({
   spec: SpecDict | null;
   onSpecChange: (next: SpecDict) => void;
 }) {
-  const routes: Record<string, RouteStep[]> = spec?.spawn?.routes ?? {};
+  const routes: Record<string, NamedRoute> = spec?.spawn?.routes ?? {};
   const routeNames = Object.keys(routes);
   const [active, setActive] = useState<string | null>(routeNames[0] ?? null);
   const [selId, setSelId] = useState<string | null>(null);
@@ -150,7 +152,7 @@ export default function RouteTab({
   // A drag from a node's dot let go in empty space: what to add there.
   const [adding, setAdding] = useState<{ from: string; x: number; y: number } | null>(null);
   const current = active && routes[active] ? active : routeNames[0] ?? null;
-  const steps = current ? routes[current] ?? [] : [];
+  const steps = current ? routeSteps(routes[current]) : [];
 
   const waypointNames = useMemo(
     () =>
@@ -173,7 +175,7 @@ export default function RouteTab({
   const spawnName = spawnSel && spawnNames.includes(spawnSel) ? spawnSel : defaultSpawn;
   const spawnIdx = spawnName ? spawnNames.indexOf(spawnName) : -1;
 
-  const writeRoutes = (next: Record<string, RouteStep[]>) => {
+  const writeRoutes = (next: Record<string, NamedRoute>) => {
     if (!spec) return;
     const nextSpec = structuredClone(spec);
     nextSpec.spawn = nextSpec.spawn ?? emptySpawn();
@@ -182,7 +184,11 @@ export default function RouteTab({
   };
   const setSteps = (next: RouteStep[]) => {
     if (!current) return;
-    writeRoutes({ ...routes, [current]: next });
+    writeRoutes({ ...routes, [current]: withRouteSteps(routes[current], next) });
+  };
+  const setColor = (color: string | undefined) => {
+    if (!current) return;
+    writeRoutes({ ...routes, [current]: withRouteColor(routes[current], color) });
   };
 
   const addRoute = () => {
@@ -196,7 +202,7 @@ export default function RouteTab({
   const renameRoute = (oldName: string, raw: string) => {
     const name = raw.trim();
     if (!name || name === oldName || routes[name]) return;
-    const next: Record<string, RouteStep[]> = {};
+    const next: Record<string, NamedRoute> = {};
     for (const [k, v] of Object.entries(routes)) next[k === oldName ? name : k] = v;
     writeRoutes(next);
     setActive(name);
@@ -316,7 +322,7 @@ export default function RouteTab({
           >
             <span className="route-list-name">{n}</span>
             <span className="muted small">
-              {stepCount(routes[n] ?? [])} step{stepCount(routes[n] ?? []) === 1 ? "" : "s"}
+              {stepCount(routeSteps(routes[n]))} step{stepCount(routeSteps(routes[n])) === 1 ? "" : "s"}
               {usedBy(n) ? ` · ${usedBy(n)} spawn${usedBy(n) === 1 ? "" : "s"}` : ""}
             </span>
           </div>
@@ -350,6 +356,15 @@ export default function RouteTab({
                 onChange={(v) => setSpawnSel(v || null)}
                 options={spawnNames.map((n) => ({ value: n }))}
               />
+            </label>
+            <label className="route-color" title="the color the route is drawn in, on the map and in the drivers">
+              <span className="muted">color</span>
+              <ColorPicker value={routeColor(routes[current])} onChange={setColor} />
+              {routeColor(routes[current]) && (
+                <button className="link" title="draw it in the next default route color" onClick={() => setColor(undefined)}>
+                  default
+                </button>
+              )}
             </label>
             <span className="spacer" />
             <button className="danger-btn" title="delete this route" onClick={() => deleteRoute(current)}>

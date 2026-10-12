@@ -16,6 +16,7 @@ from bluesky.tools.geo import qdrpos
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 from bluesky_sandbox.sim.scenario.geometry_json import (
+    route_color_map,
     bounds_geometry,
     queryable_geometry,
     spawn_region_geometry,
@@ -222,6 +223,7 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
         "airspace": airspace,
         "queryables": queryables,
         "spawn_regions": spawn_regions,
+        "route_colors": route_color_map(episode.spawn),
         "shapes": regions,
         "sampled_aircraft": sampled_aircraft,
         "max_aircraft": int(episode.max_aircraft),

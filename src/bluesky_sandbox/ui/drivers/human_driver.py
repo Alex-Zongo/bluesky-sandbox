@@ -35,7 +35,7 @@ from typing import NamedTuple
 
 import bluesky as bs
 
-from bluesky_sandbox.sim.spawn import expand_route_paths
+from bluesky_sandbox.sim.spawn import DEFAULT_ROUTE_COLORS, expand_route_paths, route_colors
 from bluesky_sandbox.sim.spawn.regions import param_alt_range
 
 from .common import DISPLAY_TOGGLES, DisplayToggle, PrimitiveDrawMixin, TrailMixin
@@ -55,6 +55,14 @@ class RoutePoint(NamedTuple):
     #: The fix's name, to label it by; ``None`` where the point is no fix (a
     #: spawn's center) or the fix is not to be labelled (``render_label``).
     name: str | None = None
+
+
+class DefinedRoute(NamedTuple):
+    """One line of a design's routes as it is drawn: its points, in the color
+    of the route it belongs to (see :func:`~bluesky_sandbox.sim.spawn.route_colors`)."""
+
+    points: list[RoutePoint]
+    color: str
 
 
 class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
@@ -274,39 +282,42 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
             self.VO_HORIZON_FRAC_MIN, min(1.0, float(frac))
         )
 
-    def defined_route_polylines(self) -> list[list[RoutePoint]]:
+    def defined_route_polylines(self) -> list[DefinedRoute]:
         """Polylines for the design's *defined* routes (static for the episode).
 
         These come from the scenario's route definitions + waypoint positions
         (not a live per-aircraft route), so they don't change during the episode
-        and are resolved once and cached (cleared on reset). Returns a list of
-        routes, each an ordered list of :class:`RoutePoint`.
+        and are resolved once and cached (cleared on reset). Returns each line
+        of every route - a branching one has several - as a
+        :class:`DefinedRoute`: its :class:`RoutePoint` s in the route's color.
+        Routes come in the designer map's order: the named ones, the global
+        one, then those given inline on a spawn region.
         """
         cached = getattr(self, "_defined_routes_cache", None)
         if cached is not None:
             return cached
 
-        polylines: list[list[RoutePoint]] = []
+        polylines: list[DefinedRoute] = []
         env = getattr(self, "_env", None)
         if env is not None:
             spawn = env.episode_spawn
             queryables = env.episode_queryables
             routes_lib = dict(spawn.routes or {})
-            # Every named route, plus any inline fixed route on a region / global.
-            specs = list(routes_lib.values())
-            specs.extend(r.route for r in spawn.regions if isinstance(r.route, (list, tuple)))
-            if isinstance(spawn.route, (list, tuple)):
-                specs.append(spawn.route)
+            inline = [spawn.route] if isinstance(spawn.route, (list, tuple)) else []
+            inline.extend(r.route for r in spawn.regions if isinstance(r.route, (list, tuple)))
+            colors = route_colors(routes_lib, extra=len(inline))
+            named_colors = dict(zip(routes_lib, colors, strict=False))
+            inline_colors = {id(spec): color for spec, color in zip(inline, colors[len(routes_lib):], strict=True)}
 
             seen: set[tuple] = set()
-            for spec in specs:
+            for spec, color in zip([*routes_lib.values(), *inline], colors, strict=True):
                 for pts in self._route_paths(spec, routes_lib, queryables):
                     if len(pts) < 2:
                         continue
-                    key = tuple((round(p[0], 6), round(p[1], 6)) for p in pts)
+                    key = tuple((round(p.lat, 6), round(p.lon, 6)) for p in pts)
                     if key not in seen:
                         seen.add(key)
-                        polylines.append(pts)
+                        polylines.append(DefinedRoute(pts, color))
             # From each spawn to where its route begins, so a route reads from
             # where its aircraft appear - as the designer's map draws it: from
             # the middle of the band they spawn into, else at the route's
@@ -314,25 +325,27 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
             for region in spawn.regions:
                 band = param_alt_range(region.params.get("alt_ft"))
                 center = region.bounds.footprint.center_point()
-                for entry in self._route_entries(region.route, routes_lib, queryables):
+                entries = self._route_entries(region.route, routes_lib, queryables, named_colors, inline_colors)
+                for entry, color in entries:
                     alt_ft = 0.5 * (band[0] + band[1]) if band is not None else entry.alt_ft
                     start = RoutePoint(float(center.lat_deg), float(center.lon_deg), alt_ft, alt_ft is not None)
-                    polylines.append([start, entry])
+                    polylines.append(DefinedRoute([start, entry], color))
 
         self._defined_routes_cache = polylines
         return polylines
 
-    def defined_route_fixes(self) -> list[RoutePoint]:
+    def defined_route_fixes(self) -> list[tuple[RoutePoint, str]]:
         """Each named fix of the design's defined routes, once - where it is
-        drawn - to label: a fix on several routes is one fix, and one on the
-        tracked aircraft's route is left to that route's own label."""
+        drawn, with the color of the first route through it - to label: a fix
+        on several routes is one fix, and one on the tracked aircraft's route
+        is left to that route's own label."""
         tracked = self.tracked_acid()
         named = {wp.get("name") for wp in self.aircraft_route_waypoints(tracked)} if tracked is not None else set()
-        fixes: dict[str, RoutePoint] = {}
-        for pts in self.defined_route_polylines():
-            for p in pts:
+        fixes: dict[str, tuple[RoutePoint, str]] = {}
+        for route in self.defined_route_polylines():
+            for p in route.points:
                 if p.name is not None and p.name not in named:
-                    fixes.setdefault(p.name, p)
+                    fixes.setdefault(p.name, (p, route.color))
         return list(fixes.values())
 
     @staticmethod
@@ -355,18 +368,21 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         return out
 
     @classmethod
-    def _route_entries(cls, route, routes_lib, queryables) -> list[RoutePoint]:
+    def _route_entries(cls, route, routes_lib, queryables, named_colors, inline_colors) -> list[tuple[RoutePoint, str]]:
         """Where each path ``route`` may take begins - a route given inline, by
-        name, or a choice of names - as it is drawn."""
+        name, or a choice of names - as it is drawn, with that route's color."""
         if route is None:
             return []
         names = route.weights if hasattr(route, "weights") else [route] if isinstance(route, str) else None
-        specs = [routes_lib[n] for n in names if n in routes_lib] if names is not None else [route]
-        out = []
-        for spec in specs:
+        if names is None:
+            specs = [(route, inline_colors.get(id(route), DEFAULT_ROUTE_COLORS[0]))]
+        else:
+            specs = [(routes_lib[n], named_colors[n]) for n in names if n in routes_lib]
+        out: list[tuple[RoutePoint, str]] = []
+        for spec, color in specs:
             for path in cls._route_paths(spec, routes_lib, queryables):
-                if path and path[0] not in out:
-                    out.append(path[0])
+                if path and (path[0], color) not in out:
+                    out.append((path[0], color))
         return out
 
     def on_reset(self, env=None) -> None:

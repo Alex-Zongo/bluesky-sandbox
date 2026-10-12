@@ -1044,19 +1044,19 @@ class HorizontalView(PygameView):
         self, canvas: pygame.Surface, driver: PygameSimDriver, placed: list[pygame.Rect]
     ) -> None:
         """Faint polylines through the design's defined route waypoints, each
-        fix named."""
-        color = C.named("cyan")
-        for pts in driver.defined_route_polylines():
-            px = [self.project(p.lat, p.lon) for p in pts]
+        in its route's color, each fix named."""
+        for route in driver.defined_route_polylines():
+            color = C.named(route.color)
+            px = [self.project(p.lat, p.lon) for p in route.points]
             if len(px) >= 2:
                 pygame.draw.lines(canvas, color, False, px, width=1)
             for x, y in px:
                 pygame.draw.circle(canvas, color, (int(round(x)), int(round(y))), 2, width=1)
         if not driver.show_labels or driver.font is None:
             return
-        for fix in driver.defined_route_fixes():
+        for fix, color in driver.defined_route_fixes():
             x, y = self.project(fix.lat, fix.lon)
-            bg, rect = self._place_label(driver, fix.name, color, placed, (int(x), int(y) - 4))
+            bg, rect = self._place_label(driver, fix.name, C.named(color), placed, (int(x), int(y) - 4))
             canvas.blit(bg, rect.topleft)
 
     def _draw_one_route(
@@ -1159,7 +1159,8 @@ class HorizontalView(PygameView):
             if alt_tol_ft is not None:
                 label_lines.append(f"TOL  +/-{int(round(float(alt_tol_ft)))} FT")
             label = "\n".join(label_lines)
-            if not with_labels or not driver.show_labels or driver.font is None or not label:
+            # A waypoint whose label the design turned off (render_label) keeps its mark only.
+            if not with_labels or not driver.show_labels or driver.font is None or not label or not wp.get("render_label", True):
                 continue
             bg = driver.render_text_bg(str(label), color)
             rect = bg.get_rect()

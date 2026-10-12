@@ -53,7 +53,7 @@ from bluesky_sandbox.sim.bounds import (
     VertexAltitudeBand,
 )
 from bluesky_sandbox.sim.performance.envelope import EnvelopeSample
-from bluesky_sandbox.sim.spawn import TowardRoute
+from bluesky_sandbox.sim.spawn import Route, TowardRoute
 from bluesky_sandbox.sim.queryables import (
     QueryRegion,
     RegionResult,
@@ -745,6 +745,20 @@ def test_a_fix_flown_over_and_a_spawn_headed_at_its_route():
     assert "flyover=True" in scenario_py
     assert "'hdg_deg': TowardRoute()" in scenario_py
     assert "from bluesky_sandbox.sim.spawn import TowardRoute" in scenario_py
+
+
+def test_a_named_route_with_its_color():
+    spec = _example_design_spec()
+    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0}}
+    spec.spawn["routes"] = {"home": {"type": "route", "steps": ["goal"], "color": "white"}}
+    spec.spawn["route"] = "home"
+    rt = S.DesignSpec.from_json(spec.to_json())
+    assert rt.spawn["routes"]["home"] == {"type": "route", "steps": ["goal"], "color": "white"}
+    assert build_scenario(spec).support().spawn.routes["home"] == Route(["goal"], "white")
+    files = codegen.generate_task(spec, "Colored Route")
+    scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
+    assert "'home': Route(['goal'], color='white')" in scenario_py
+    assert "from bluesky_sandbox.sim.spawn import Route" in scenario_py
 
 
 def test_active_route_waypoint_fields_cataloged():

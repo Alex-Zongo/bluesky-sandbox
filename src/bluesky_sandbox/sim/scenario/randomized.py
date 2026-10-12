@@ -46,7 +46,7 @@ from bluesky_sandbox.sim.bounds import (
 )
 from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
-from bluesky_sandbox.sim.spawn import SpawnConfig
+from bluesky_sandbox.sim.spawn import SpawnConfig, map_route_steps
 
 from . import transforms as _t
 from .base import EpisodeSpec, Scenario
@@ -427,7 +427,7 @@ class RandomizedScenario(Scenario):
             spawn,
             regions=regions,
             route=transform_route(spawn.route),
-            routes={name: transform_route(rt) for name, rt in spawn.routes.items()},
+            routes={name: map_route_steps(rt, transform_route) for name, rt in spawn.routes.items()},
         )
         return _episode_spec(self, airspace, spawn, queryables, named)
 

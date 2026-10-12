@@ -3,6 +3,7 @@
 // deck.gl - just data in, data out, so the same primitives drive rendering and
 // the drag-edit handles.
 import { waypointSampleRef } from "../waypointPoints";
+import { routeSteps } from "../route/namedRoute";
 import type { PreviewResult, SpecDict } from "../api";
 import { altRange, repValue } from "../specHelpers";
 import type {
@@ -665,7 +666,7 @@ export function routeEntryWaypoints(
   if (routeSpec == null) return [];
   if (typeof routeSpec === "string") {
     if (seen.has(routeSpec) || !routes[routeSpec]) return [];
-    return routeEntryWaypoints(routes[routeSpec], routes, new Set([...seen, routeSpec]));
+    return routeEntryWaypoints(routeSteps(routes[routeSpec]), routes, new Set([...seen, routeSpec]));
   }
   if (!Array.isArray(routeSpec)) {
     if (routeSpec.type === "categorical") {
@@ -805,7 +806,7 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
         paths = paths.flatMap((p) => branchPaths.map((bp) => [...p, ...bp]));
       } else if (s && typeof s === "object" && typeof s.route === "string") {
         if (!seenRefs.has(s.route) && routes[s.route]) {
-          const sub = enumerate(routes[s.route], new Set([...seenRefs, s.route]));
+          const sub = enumerate(routeSteps(routes[s.route]), new Set([...seenRefs, s.route]));
           paths = paths.flatMap((p) => sub.map((sp) => [...p, ...sp]));
         }
       } else if (s && typeof s === "object" && typeof s.waypoint === "string") {
@@ -824,8 +825,11 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
     if (!Array.isArray(steps) || seen.has(key)) return;
     seen.add(key);
     // All limbs of one route share the key (so the eye toggle hides them
-    // together) and color, but are separate polylines.
-    const color = ROUTE_PALETTE[colorIndex++ % ROUTE_PALETTE.length];
+    // together) and color, but are separate polylines. The color is the
+    // route's own or the next default - decided by the library, as the
+    // drivers draw it (the preview's route_colors).
+    const own = preview.route_colors?.[key];
+    const color = own ? cssToRgb(own) : ROUTE_PALETTE[colorIndex++ % ROUTE_PALETTE.length];
     const drawn = new Set<string>();
     for (const path of enumerate(steps)) {
       const names = collapse(path).filter((n) => positions.has(n));
@@ -840,7 +844,7 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
     }
   };
 
-  for (const name of Object.keys(routes)) add(`route:${name}`, name, routes[name]);
+  for (const name of Object.keys(routes)) add(`route:${name}`, name, routeSteps(routes[name]));
   if (Array.isArray(spec.spawn?.route)) add("route:__global__", "global route", spec.spawn.route);
   (spec.spawn?.regions ?? []).forEach((region: SpecDict, index: number) => {
     if (Array.isArray(region.route)) {

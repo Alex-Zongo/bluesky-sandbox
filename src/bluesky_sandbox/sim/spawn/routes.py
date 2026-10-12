@@ -9,6 +9,8 @@ aircraft comes from, which is :mod:`~bluesky_sandbox.sim.spawn.regions`.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -37,6 +39,51 @@ import numpy as np
 # as plain waypoint names for validation and network visualization.
 RouteStep = str | dict
 RouteSpec = list[RouteStep] | tuple[RouteStep, ...]
+
+
+@dataclass(frozen=True)
+class Route:
+    """A named route with what it is drawn in: its ``steps`` (the grammar
+    above) and ``color`` - a palette name or ``#rrggbb``; ``None`` takes the
+    next of the default route colors (see :func:`route_colors`). Anywhere a
+    route's steps are taken, a :class:`Route` stands for them."""
+
+    steps: RouteSpec
+    color: str | None = None
+
+
+#: The colors routes without their own are drawn in, in turn - none a driver
+#: already gives a meaning: yellow (the selected aircraft), magenta (its
+#: route), green (spawn regions), nor an alert's hue.
+DEFAULT_ROUTE_COLORS = ("cyan", "blue", "white", "#84cc16", "#94a3b8")
+
+
+def route_steps(route):
+    """A route's steps: a :class:`Route`'s, else the route itself."""
+    return route.steps if isinstance(route, Route) else route
+
+
+def map_route_steps(route, fn: Callable):
+    """``route`` with ``fn`` applied to its steps - a :class:`Route` kept one,
+    its color kept."""
+    if isinstance(route, Route):
+        return replace(route, steps=fn(route.steps))
+    return fn(route)
+
+
+def route_colors(routes: dict, extra: int = 0) -> list[str]:
+    """Each named route's color, in order - its own, or the next default -
+    then the colors of ``extra`` more routes with none (inline ones)."""
+    out, i = [], 0
+    for route in routes.values():
+        own = route.color if isinstance(route, Route) else None
+        if own is None:
+            own, i = DEFAULT_ROUTE_COLORS[i % len(DEFAULT_ROUTE_COLORS)], i + 1
+        out.append(own)
+    for _ in range(extra):
+        out.append(DEFAULT_ROUTE_COLORS[i % len(DEFAULT_ROUTE_COLORS)])
+        i += 1
+    return out
 _WAYPOINT_STEP_KEYS = (
     "waypoint",
     "speed_kts",
@@ -203,7 +250,7 @@ def _validate_choice(step: dict) -> tuple[list, list[float] | None]:
 def _resolve_pick(steps, routes, seen, pick) -> list[str]:
     """Resolve ``steps`` to one flat path, using ``pick`` to choose branches."""
     out: list[str] = []
-    for step in steps:
+    for step in route_steps(steps):
         if isinstance(step, dict):
             if "choice" in step:
                 branches, weights = _validate_choice(step)
@@ -233,7 +280,7 @@ def _resolve_pick(steps, routes, seen, pick) -> list[str]:
 def _resolve_all(steps, routes, seen) -> list[list[str]]:
     """Enumerate every concrete path through ``steps`` (cartesian over choices)."""
     paths: list[list[str]] = [[]]
-    for step in steps:
+    for step in route_steps(steps):
         if isinstance(step, dict):
             if "choice" in step:
                 branches, _ = _validate_choice(step)

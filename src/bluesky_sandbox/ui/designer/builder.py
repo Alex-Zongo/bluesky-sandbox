@@ -47,7 +47,7 @@ from bluesky_sandbox.sim.bounds.base import Footprint
 from bluesky_sandbox.sim.queryables import Queryable
 from bluesky_sandbox.sim.scenario import GeometryDict, RandomizedScenario
 from bluesky_sandbox.sim.scenario import transforms as _t
-from bluesky_sandbox.sim.spawn import PlannedSource, SpawnConfig, SpawnSource, nearest_entry
+from bluesky_sandbox.sim.spawn import PlannedSource, SpawnConfig, SpawnSource, map_route_steps, nearest_entry
 
 from . import setup_code
 from . import spec as _spec
@@ -580,7 +580,7 @@ def _move_waypoint_sampling_to_routes(
     out = dict(spawn)
     out["route"] = route_with_sampling(out.get("route"))
     out["routes"] = {
-        name: route_with_sampling(route)
+        name: _spec.with_route_steps(route, route_with_sampling)
         for name, route in out.get("routes", {}).items()
     }
     out["regions"] = [
@@ -638,7 +638,7 @@ def _load_route_step_sample_bounds(spawn: SpawnConfig) -> None:
 
     spawn.route = load_route(spawn.route)
     spawn.routes = {
-        name: load_route(route)
+        name: map_route_steps(route, load_route)
         for name, route in spawn.routes.items()
     }
     for region in spawn.regions:
