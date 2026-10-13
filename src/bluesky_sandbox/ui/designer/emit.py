@@ -437,6 +437,8 @@ class _Emitter:
             lines.append(
                 f"        spawn_lookahead_s={float(d['spawn_lookahead_s'])!r},"
             )
+        if d.get("spawn_gap_s") is not None:
+            lines.append(f"        spawn_gap_s={float(d['spawn_gap_s'])!r},")
         body = "\n".join(lines)
         return f"SpawnRegion(\n{body}\n    )"
 

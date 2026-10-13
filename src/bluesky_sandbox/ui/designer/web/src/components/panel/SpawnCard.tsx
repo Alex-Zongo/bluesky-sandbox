@@ -280,6 +280,27 @@ export function SpawnBody({
           value={region.spawn_time}
           onChange={(v) => onChange({ ...region, spawn_time: v })}
         />
+        <div className="value-field">
+          <div className="vf-head">
+            <span className="vf-label">gap between spawns s</span>
+            <span className="vf-spacer" />
+            <NumInput
+              className="vf-input"
+              step="any"
+              placeholder="none"
+              value={(region.spawn_gap_s as number | undefined) ?? Number.NaN}
+              onChange={(n) => onChange({ ...region, spawn_gap_s: n })}
+              onClear={() => {
+                const next = { ...region };
+                delete next.spawn_gap_s;
+                onChange(next);
+              }}
+            />
+          </div>
+        </div>
+        <div className="muted small">
+          fewest seconds between this area's aircraft, as handed over in trail; blank sets none ↑
+        </div>
       </FieldGroup>
       <FieldGroup title="Route">
         <RouteSpecControl

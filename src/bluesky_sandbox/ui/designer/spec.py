@@ -942,6 +942,7 @@ def _spawn_region_dump(r: SpawnRegion) -> dict[str, Any]:
         "spawn_sep_nm": r.spawn_sep_nm,
         "spawn_sep_ft": r.spawn_sep_ft,
         "spawn_lookahead_s": r.spawn_lookahead_s,
+        "spawn_gap_s": r.spawn_gap_s,
     }
 
 
@@ -963,6 +964,7 @@ def _spawn_region_load(d: dict[str, Any]) -> SpawnRegion:
         spawn_sep_nm=d.get("spawn_sep_nm"),
         spawn_sep_ft=d.get("spawn_sep_ft"),
         spawn_lookahead_s=d.get("spawn_lookahead_s"),
+        spawn_gap_s=d.get("spawn_gap_s"),
     )
 
 

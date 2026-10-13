@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -164,6 +164,12 @@ class SpawnRegion:
 
         Defaults to ``0.0`` (all aircraft materialize at episode start, the
         previous behavior).
+    spawn_gap_s:
+        The fewest seconds between consecutive aircraft this region spawns in
+        an episode - an upstream sector handing traffic over in trail. With a
+        ``(low, high)`` window the times are drawn uniformly over the window
+        among those this far apart; otherwise each is pushed back to this
+        far after the one before. ``None`` (default): none.
     route:
         Per-region route override. Use a fixed list of waypoint queryable names,
         a named route key from :class:`SpawnConfig.routes`, or a distribution that
@@ -242,6 +248,7 @@ class SpawnRegion:
     spawn_sep_nm: float | None = None
     spawn_sep_ft: float | None = None
     spawn_lookahead_s: float | None = None
+    spawn_gap_s: float | None = None
 
     def __post_init__(self) -> None:
         invalid = [k for k in self.params if k not in _SPAWN_PARAM_KEYS]
@@ -310,6 +317,51 @@ class SpawnRegion:
                 )
         else:
             _distribution_support(self.spawn_time, label="SpawnRegion.spawn_time")
+        if self.spawn_gap_s is not None:
+            gap = float(self.spawn_gap_s)
+            if not (math.isfinite(gap) and gap >= 0):
+                raise ValueError(f"SpawnRegion.spawn_gap_s must be >= 0, got {self.spawn_gap_s!r}.")
+            if isinstance(self.spawn_time, tuple) and isinstance(self.n_aircraft, int):
+                self._check_gap_fits(self.n_aircraft)
+
+    def _check_gap_fits(self, n: int) -> None:
+        """Refuse ``n`` aircraft ``spawn_gap_s`` apart that a ``(low, high)``
+        spawn window cannot hold."""
+        lo, hi = (float(v) for v in self.spawn_time)
+        need = (n - 1) * float(self.spawn_gap_s)
+        if need > hi - lo:
+            raise ValueError(
+                f"SpawnRegion {self.name or ''}: {n} aircraft {self.spawn_gap_s:g} s apart "
+                f"need {need:g} s; the spawn_time window is {hi - lo:g} s."
+            )
+
+    def spaced_times(self, times: Sequence[float]) -> list[float]:
+        """``times`` - this region's aircraft's, as drawn - at least
+        ``spawn_gap_s`` apart, in the same order: the earliest stays the
+        earliest. With no gap, ``times`` as they are.
+
+        Within a ``(low, high)`` window, uniform draws over the window shrunk
+        by the gaps, sorted, then each moved later by the gaps before it: the
+        uniform draw over the window of times that far apart. Otherwise each
+        is pushed back to the gap after the one before."""
+        times = [float(t) for t in times]
+        gap = self.spawn_gap_s
+        if not gap or len(times) < 2:
+            return times
+        gap = float(gap)
+        order = sorted(range(len(times)), key=times.__getitem__)
+        out = [0.0] * len(times)
+        if isinstance(self.spawn_time, tuple):
+            self._check_gap_fits(len(times))
+            lo, hi = (float(v) for v in self.spawn_time)
+            scale = 0.0 if hi == lo else (hi - lo - (len(times) - 1) * gap) / (hi - lo)
+            for k, i in enumerate(order):
+                out[i] = lo + (times[i] - lo) * scale + k * gap
+        else:
+            last = -math.inf
+            for i in order:
+                out[i] = last = max(times[i], last + gap)
+        return out
 
     def sample_n(self, rng: np.random.Generator) -> int:
         """Return the number of aircraft to spawn in this region."""
@@ -816,8 +868,11 @@ class SpawnConfig:
             counts[int(rng.choice(list(counts)))] = 1
         candidates = []
         for region_index, n in counts.items():
-            for _ in range(n):
-                candidates.append((region_index, self.draw_request(region_index, rng)))
+            requests = [self.draw_request(region_index, rng) for _ in range(n)]
+            times = self.regions[region_index].spaced_times([r.time_s for r in requests])
+            candidates.extend(
+                (region_index, replace(r, time_s=t)) for r, t in zip(requests, times)
+            )
         if limit is not None:
             limit = int(limit)
             if limit < 0:

@@ -282,7 +282,9 @@ class RegionSource(SpawnSource):
 
     def plan(self, rng: np.random.Generator, ctx: PlanContext) -> list[SpawnRequest]:
         n = max(int(self.region.sample_n(rng)), 0)
-        return [r for r in (self.draw(rng, ctx) for _ in range(n)) if r is not None]
+        requests = [r for r in (self.draw(rng, ctx) for _ in range(n)) if r is not None]
+        times = self.region.spaced_times([r.time_s for r in requests])
+        return [replace(r, time_s=t) for r, t in zip(requests, times)]
 
     def redraw(self, request: SpawnRequest, rng: np.random.Generator, ctx: PlanContext) -> SpawnRequest | None:
         again = self.draw(rng, ctx)

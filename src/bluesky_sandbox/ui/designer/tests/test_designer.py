@@ -1839,3 +1839,15 @@ def test_an_sb3_package_saves_checkpoints_and_on_ctrl_c():
     # Stopped by hand, what it learned is kept.
     learn = train.split("model.learn(", 1)[1]
     assert learn.index("except KeyboardInterrupt:") < learn.index('model.save("ppo_tmpl")')
+
+
+def test_a_spawn_gap_is_kept_and_written_into_the_package():
+    spec = _example_design_spec()
+    spec.spawn["regions"][0].update(spawn_time={"type": "range", "low": 0, "high": 1800}, spawn_gap_s=120.0)
+    again = S.DesignSpec.from_dict(spec.to_dict())
+    assert again.spawn["regions"][0]["spawn_gap_s"] == 120.0
+    (region,) = build_scenario(again).support().spawn.regions
+    assert region.spawn_gap_s == 120.0
+    scenario = next(t for p, t in codegen.generate_task(again, "Gap").items() if p.endswith("scenario.py"))
+    assert "spawn_gap_s=120.0," in scenario
+    ast.parse(scenario)
