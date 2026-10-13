@@ -702,6 +702,26 @@ class EnvBound:
         return self.bound_env.agent_context(idx)
 
 
+def bind_field(field: Any, env: Any) -> Any:
+    """``field`` bound to ``env``: one that reads its environment
+    (:class:`EnvBound`) bound itself, and one built of other fields - a
+    :meth:`~ObsField.relative_to_own` difference's two sides - with those
+    bound, however deep, so a queryable field works inside one too. Anything
+    that is no field is returned as it is."""
+    if not isinstance(field, (_BoundedField, EnvBound)):
+        return field
+    parts = {}
+    for part in fields(field):
+        value = getattr(field, part.name)
+        if isinstance(value, (_BoundedField, EnvBound)):
+            bound = bind_field(value, env)
+            if bound is not value:
+                parts[part.name] = bound
+    if parts:
+        field = replace(field, **parts)
+    return field.bind_env(env) if isinstance(field, EnvBound) else field
+
+
 @dataclass(frozen=True)
 class EnvObsField(ObsField, EnvBound, ABC):
     """An observation field that reads its environment (:class:`EnvBound`).

@@ -43,7 +43,7 @@ from bluesky.stack.stackbase import Stack
 from bluesky_sandbox.core import services
 from bluesky_sandbox.interface.fields import _lag
 from bluesky_sandbox.interface.fields._consistency import beyond_rounding, differs
-from bluesky_sandbox.interface.fields.base import EnvBound, ObsField, PairObsField
+from bluesky_sandbox.interface.fields.base import ObsField, PairObsField, bind_field
 from bluesky_sandbox.sim.geometry.conflict import invalidate_conflict_geometry
 
 #: The arguments that name an aircraft by its index (``own_idx``, and any
@@ -168,8 +168,8 @@ def probe(
     An action is given ``give``: what the policy gives it (a choice, for one
     with a step normalizer)."""
     given = field_obj
-    if isinstance(field_obj, EnvBound) and getattr(field_obj, "env", None) is None:
-        field_obj = field_obj.bind_env(env)
+    if getattr(field_obj, "env", None) is None:
+        field_obj = bind_field(field_obj, env)
     ids = list(bs.traf.id)
     if aircraft not in ids:
         raise ValueError(f"{aircraft!r} is not in the air now")

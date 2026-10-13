@@ -32,7 +32,7 @@ from bluesky.stack.stackbase import Stack
 
 from bluesky_sandbox.core import services
 from bluesky_sandbox.core.services import value_on_grid
-from bluesky_sandbox.interface.fields.base import EnvBound
+from bluesky_sandbox.interface.fields.base import bind_field
 
 from .placement import Situation, place, without_traffic
 
@@ -199,7 +199,7 @@ def _same(a: Any, b: Any) -> bool:
 
 
 def _bound(field: Any, env: Any) -> Any:
-    return field.bind_env(env) if isinstance(field, EnvBound) else field
+    return bind_field(field, env)
 
 
 def _fmt(value: Any) -> str:

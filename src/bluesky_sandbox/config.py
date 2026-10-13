@@ -13,9 +13,9 @@ from bluesky_sandbox.interface.fields.actions.clearance import expand_clearances
 from bluesky_sandbox.interface.fields.actions.mask import check_action_masks
 from bluesky_sandbox.interface.fields.base import (
     ActionField,
-    EnvBound,
     ObsField,
     PairObsField,
+    bind_field,
 )
 from bluesky_sandbox.interface.task import TaskInfoProvider
 from bluesky_sandbox.sim.performance.bada import bada_install_hint
@@ -296,13 +296,14 @@ class EnvConfig:
 
     def bind_env(self, env) -> None:
         """Bind every field in this config that reads its environment
-        (:class:`EnvBound`) - observations, state and actions alike - to
-        ``env``."""
+        (:class:`EnvBound`) - observations, state and actions alike, and the
+        fields one is built of (see :func:`bind_field`) - to ``env``."""
         for config_field in fields(self):
             value = getattr(self, config_field.name)
-            if isinstance(value, (list, tuple)) and any(isinstance(v, EnvBound) for v in value):
-                bound = [v.bind_env(env) if isinstance(v, EnvBound) else v for v in value]
-                setattr(self, config_field.name, type(value)(bound))
+            if isinstance(value, (list, tuple)):
+                bound = [bind_field(v, env) for v in value]
+                if any(b is not v for b, v in zip(bound, value, strict=True)):
+                    setattr(self, config_field.name, type(value)(bound))
 
     def __post_init__(self) -> None:
         # Each Clearance becomes the parts it declares: the action, its
