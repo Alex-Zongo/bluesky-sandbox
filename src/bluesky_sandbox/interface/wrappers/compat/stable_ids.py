@@ -18,6 +18,10 @@ Lifecycle model (black-death style mapping)::
     the underlying simulator reaches env-wide done. That lets background
     traffic continue without triggering an early vector reset when visual
     background holding is enabled.
+
+Every slot's info, from ``reset`` and ``step``, says whether the observation
+returned with it is padding - ``info["_next_padded"]`` - so a trainer can
+leave the transitions of padded slots out of its update.
 """
 
 from __future__ import annotations
@@ -188,10 +192,10 @@ class StableIDsParallelWrapper(ParallelEnv):
             real = self._stable_to_real.get(stable)
             if real is not None:
                 s_obs[stable] = obs_dict[real]
-                s_info[stable] = info_dict.get(real, {})
+                s_info[stable] = {**info_dict.get(real, {}), "_next_padded": False}
             else:
                 s_obs[stable] = self._copy_obs(self._zero_obs)
-                s_info[stable] = {}
+                s_info[stable] = {"_next_padded": True}
         return s_obs, s_info
 
     def step(
@@ -279,8 +283,11 @@ class StableIDsParallelWrapper(ParallelEnv):
                 s_info[stable] = self._padded_info()
                 continue
 
-            if real in next_obs:
-                s_obs[stable] = next_obs[real]
+            if real in next_obs or real in rewards:
+                # Done this step, the env leaves it out of the next observations
+                # (its last is info["final_observation"]): the slot's next one is
+                # padding, but its reward, done and info are this step's.
+                s_obs[stable] = next_obs[real] if real in next_obs else self._copy_obs(self._zero_obs)
                 s_rew[stable] = rewards.get(real, self._padded_reward())
                 real_terminal = bool(terms.get(real, False))
                 real_truncated = bool(truncs.get(real, False))
@@ -299,6 +306,8 @@ class StableIDsParallelWrapper(ParallelEnv):
                     info["_agent_truncated"] = real_truncated
                 if hold_for_background:
                     info["_background_hold"] = True
+                # Done, its slot is padding from here on.
+                info["_next_padded"] = real_done or real not in next_obs
                 s_info[stable] = info
                 if real_done:
                     self._stable_to_real.pop(stable, None)
@@ -319,7 +328,7 @@ class StableIDsParallelWrapper(ParallelEnv):
         return np.copy(self._zero_reward) if np.ndim(self._zero_reward) else 0.0
 
     def _padded_info(self) -> dict:
-        info: dict[str, Any] = {"_padded": True}
+        info: dict[str, Any] = {"_padded": True, "_next_padded": True}
         if self._zero_cost is not None:
             info["cost"] = np.copy(self._zero_cost) if np.ndim(self._zero_cost) else 0.0
         return info

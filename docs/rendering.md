@@ -50,13 +50,12 @@ handed out. `Recording(..., folder="videos")` keeps every clip there as well.
 wandb itself stages what it logs in its run folder before uploading it; that
 is wandb's, and it syncs and manages it.
 
-The designer's **Generate task** dialog sets this up for the RL and SB3
-packages: tick **record training**, then choose how often, how long, the
-driver and its views, and where the clips go - **wandb**, each uploaded from
-memory to the running wandb run (or saved to `videos/` when there is none), or
-a **local folder**. Training itself never draws a window: the packages'
-`evaluate.py` flies the trained policy, in the window chosen as **evaluate
-in** (`RENDER_MODE`).
+To record while training, wrap the env your `train.py` makes in it - or, for
+copies in several processes, pass the recording to `vec_env` / `sb3_vec_env`
+and collect the clips with `Clips` (see [Integrations](api/integrations.md)).
+The designer's packages leave this to you. Training itself never draws a
+window: the packages' `evaluate.py` flies the trained policy, in the window
+chosen as **evaluate in** (`RENDER_MODE`).
 
 ## Real time and views
 

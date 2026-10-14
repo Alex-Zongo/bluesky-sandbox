@@ -47,13 +47,6 @@ from .catalog import hooks as _hook_catalog
 from .design_tests import package_test_files
 from .emit import emit_env_sources, emit_scenario_sources
 from .evaluation import eval_render_mode, rl_evaluate_py, sb3_evaluate_py
-from .recording import (
-    RecordOptions,
-    main_with_wandb,
-    record_options,
-    recording_block,
-    recording_imports,
-)
 from .setup_code import PRELUDE
 from .spec import SCENARIO_HOOKS, DesignSpec, TaskInfoSpec
 from .typed_api import MODULE as TYPES_MODULE
@@ -94,7 +87,6 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
     class_stem = _class_stem(pkg)
     template = template_of(spec)
     processes = run_options(spec)
-    record = record_options(spec.metadata) if template != "plain" else None
     title = str(spec.metadata.get("name", pkg))
     meta = dict(spec.metadata)
 
@@ -166,10 +158,22 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             class_stem,
             privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
             notes=sb3_notes(spec),
+            multi_discrete=multi_discrete_actions(spec),
+            intruders=bool(e.intruder_obs_fields),
+            constrained=defines_cost(e),
             processes=processes,
-            record=record,
         )
-        files[f"{pkg}/evaluate.py"] = sb3_evaluate_py(pkg, eval_render_mode(spec.metadata))
+        files[f"{pkg}/evaluate.py"] = sb3_evaluate_py(
+            pkg, eval_render_mode(spec.metadata), constrained=defines_cost(e)
+        )
+        # How the env is fitted to SB3, the policy's network and the algorithm
+        # that trains it: the package's own to read and change.
+        files[f"{pkg}/wrappers.py"] = _package_file("wrappers.py")
+        files[f"{pkg}/masked_ppo.py"] = _package_file("masked_ppo.py")
+        if defines_cost(e):
+            files[f"{pkg}/ppo_lagrangian.py"] = _package_file("ppo_lagrangian.py")
+        if e.intruder_obs_fields:
+            files[f"{pkg}/networks.py"] = _package_file("networks.py")
     if template == "rl":
         files[f"{pkg}/train.py"] = _train_py(
             pkg,
@@ -177,7 +181,6 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             privileged=bool(e.critic_obs_fields or e.critic_intruder_obs_fields),
             has_cost=defines_cost(e),
             processes=processes,
-            record=record,
         )
         files[f"{pkg}/evaluate.py"] = rl_evaluate_py(
             pkg,
@@ -187,6 +190,11 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             batched=processes > 1,
         )
     return files
+
+
+def _package_file(name: str) -> str:
+    """A module of :mod:`.package_files`, as the package gets it."""
+    return (Path(__file__).parent / "package_files" / name).read_text()
 
 
 def _task_types(spec: DesignSpec) -> TaskTypes | None:
@@ -597,6 +605,18 @@ def defines_cost(env: Any) -> bool:
     return any((hooks.get(h) or "").strip() for h in ("cost", "cost_batch"))
 
 
+def multi_discrete_actions(spec: DesignSpec) -> bool:
+    """Whether the design's actions are all switches and choices: SB3 trains
+    them as one ``MultiDiscrete`` (the package's ``wrappers.MultiDiscreteActions``) rather than
+    the ``Dict`` of their parts."""
+    try:
+        config = build_design_config(spec)
+    except Exception:  # a broken design says so elsewhere
+        return False
+    kinds = {action_kind(f) for f in config.action_fields}
+    return bool(kinds) and ActionKind.CONTINUOUS not in kinds
+
+
 def sb3_notes(spec: DesignSpec) -> list[dict[str, str]]:
     """What Stable-Baselines3 cannot do with this design: ``error`` where the
     SB3 package cannot train it at all, ``warning`` where it trains something
@@ -607,19 +627,20 @@ def sb3_notes(spec: DesignSpec) -> list[dict[str, str]]:
         return []
     notes: list[dict[str, str]] = []
     kinds = {action_kind(f) for f in config.action_fields}
-    if kinds - {ActionKind.CONTINUOUS}:
+    if ActionKind.CONTINUOUS in kinds and len(kinds) > 1:
         notes.append({
             "level": "error",
-            "message": "A switch (0/1) or a choice (step) action makes the action space a Dict "
-            "of its parts; SB3's algorithms do not train Dict action spaces. Use only "
-            "continuous actions, or the RL template.",
+            "message": "A continuous action alongside a switch (0/1) or a choice (step) makes "
+            "the action space a Dict of its parts; SB3's algorithms do not train Dict action "
+            "spaces. Make the actions all continuous, or all switches and choices, or use the "
+            "RL template.",
         })
     if defines_cost(spec.env):
         notes.append({
-            "level": "warning",
-            "message": "SB3 has no constrained algorithm: PPO optimizes the reward alone and "
-            "info[\"cost\"] is ignored. Fold the cost into the reward (a Lagrangian penalty), "
-            "or use the RL template.",
+            "level": "info",
+            "message": "PPOLagrangian keeps each agent's episode cost - its cost hook's sum - "
+            "under train()'s cost_limit, with a cost critic of its own and a Lagrange "
+            "multiplier raised while the episodes cost more. The cost hook returns one number.",
         })
     if spec.env.critic_obs_fields or spec.env.critic_intruder_obs_fields:
         notes.append({
@@ -641,12 +662,17 @@ def _sb3_train_py(
     class_stem: str,
     privileged: bool,
     notes: list[dict[str, str]],
+    multi_discrete: bool = False,
+    intruders: bool = False,
+    constrained: bool = False,
     processes: int = 1,
-    record: RecordOptions | None = None,
 ) -> str:
     """``train.py`` for Stable-Baselines3: every agent shares one PPO policy,
-    through SuperSuit's PettingZoo-to-vector-env conversion. With ``record``,
-    every copy records clips, uploaded to wandb or saved as training goes."""
+    through SuperSuit's PettingZoo-to-vector-env conversion. With
+    ``multi_discrete``, the actions - all switches and choices - are one
+    ``MultiDiscrete``. With ``intruders``, the policy reads them with a
+    transformer, however many there are. ``constrained`` - the design defines a
+    cost - trains with PPO-Lagrangian, under a cost limit."""
     listed = "".join(
         "\n" + textwrap.fill(f"- {n['level'].upper()}: {n['message']}", width=76, subsequent_indent="  ")
         for n in notes
@@ -689,69 +715,70 @@ class ActorView(BaseParallelWrapper):
     )
     wrap_view = "\n    env = ActorView(env)" if privileged else ""
     notes_block = f"\n\nWhat SB3 does differently from this design:{listed}\n" if listed else "\n"
-    if record is None:
-        stdlib = recorder = sandbox = optional = block = upload_callback = ""
-        make = f"    env = {class_stem}Env(render_mode=render_mode){wrap_view}"
-        record_arg = ""
-        record_doc = ""
-        vec_record = ""
-        learn = "model.learn(total_timesteps=total_timesteps)"
-        drain = ""
-        main = "if __name__ == \"__main__\":\n    train()\n"
-        install = "pip install stable-baselines3 supersuit"
+    gym_import = "" if intruders else "import gymnasium as gym\n"
+    algo = "PPOLagrangian" if constrained else "MaskedPPO"
+    algo_module = "ppo_lagrangian" if constrained else "masked_ppo"
+    lines = [
+        "# SB3's 64 a minibatch is for one env: here 64 for each agent slot, so an",
+        "# epoch is 32 minibatches however many slots - small ones leave the cores idle.",
+        "batch_size = batch_size or 64 * vec.num_envs",
+    ]
+    if intruders:
+        lines.append("# Every intruder a token a transformer attends over, padded rows masked out.")
+        args = ['"MultiInputPolicy"', "vec"]
     else:
-        stdlib, sandbox, optional = recording_imports(record, clips=True)
-        recorder = (
-            "from stable_baselines3.common.callbacks import BaseCallback\n" if record.uploads else ""
+        lines.append(
+            "policy = \"MultiInputPolicy\" if isinstance(vec.observation_space, gym.spaces.Dict) "
+            "else \"MlpPolicy\""
         )
-        block = recording_block(record, pkg)
-        make = (
-            "    # A recorded copy draws offscreen, with the recording's driver and views.\n"
-            "    drawing = (\n"
-            "        {\"frame_driver\": FRAME_DRIVER, \"views\": recorded_views()}\n"
-            "        if render_mode == \"rgb_array\"\n"
-            "        else {}\n"
-            "    )\n"
-            f"    env = {class_stem}Env(render_mode=render_mode, **drawing){wrap_view}"
+        args = ["policy", "vec"]
+    if constrained:
+        lines.append("# Each agent's episode cost kept under cost_limit by a Lagrange multiplier.")
+        args += ["cost_limit=cost_limit", "lambda_lr=lambda_lr"]
+    # The actor and the value function each read the observation with their own
+    # features extractor, so the value loss does not shape what the policy reads.
+    extractor = '"features_extractor_class": IntruderTransformer, ' if intruders else ""
+    args.append(f'policy_kwargs={{{extractor}"share_features_extractor": False}}')
+    args += ["batch_size=batch_size", "seed=seed", "tensorboard_log=tensorboard_log", "verbose=1"]
+    lines += [f"model = {algo}(", *(f"    {a}," for a in args), ")"]
+    policy = "\n        ".join(lines)
+    cost_arg = (
+        ",\n    cost_limit: float = 0.0,\n    lambda_lr: float = 0.035" if constrained else ""
+    )
+    cost_doc = (
+        "\n    ``cost_limit`` is the most an agent's episode may cost, on average, in\n"
+        "    the cost hook's units; ``lambda_lr`` Adam's learning rate on the\n"
+        "    multiplier, about how far it moves each update, whatever those units."
+        if constrained
+        else ""
+    )
+    wrapper_names = "AgentEpisodes, MultiDiscreteActions" if multi_discrete else "AgentEpisodes"
+    package_imports = "".join(
+        sorted(
+            [
+                f"from .{algo_module} import {algo}\n",
+                f"from .wrappers import {wrapper_names}\n",
+                *(["from .networks import IntruderTransformer\n"] if intruders else []),
+            ]
         )
-        upload_callback = "" if not record.uploads else """
-
-class UploadClips(BaseCallback):
-    \"\"\"Uploads each clip the copies finish, as training goes.\"\"\"
-
-    def __init__(self, clips: Clips) -> None:
-        super().__init__()
-        self.clips = clips
-
-    def _on_step(self) -> bool:
-        for clip in self.clips.new():
-            upload(clip)
-        return True
-"""
-        record_arg = ",\n    record: bool = True"
-        record_doc = "\n    With ``record``, every copy records clips (``RECORDING``)."
-        vec_record = ", RECORDING if record else None"
-        if record.uploads:
-            learn = "model.learn(total_timesteps=total_timesteps, callback=UploadClips(clips))"
-            drain = (
-                "\n        # The clips the copies finished as they closed."
-                "\n        for clip in clips.new():"
-                "\n            upload(clip)"
-                "\n        clips.close()"
-            )
-            main = main_with_wandb("train()")
-            install = "pip install stable-baselines3 supersuit \"bluesky-sandbox[recording]\" wandb"
-        else:
-            learn = "model.learn(total_timesteps=total_timesteps)"
-            drain = ""
-            main = "if __name__ == \"__main__\":\n    train()\n"
-            install = "pip install stable-baselines3 supersuit \"bluesky-sandbox[recording]\""
-    clips_open = "\n    clips = Clips(RECORDING)" if record is not None and record.uploads else ""
+    )
+    if multi_discrete:
+        wrapped = (
+            "    # SB3 takes no Dict action space: the switches and choices as one MultiDiscrete.\n"
+            "    return MultiDiscreteActions(wrap_parallel_env(env, max_agents=max_agents))"
+        )
+    else:
+        wrapped = "    return wrap_parallel_env(env, max_agents=max_agents)"
+    head_imports = (
+        f"{gym_import}{view_imports}from stable_baselines3.common.callbacks import CheckpointCallback\n"
+    )
+    head_imports += "\n" if head_imports else ""
     return f'''"""Train this task with Stable-Baselines3: one PPO policy shared by every
 agent, the multi-agent env made a vector env by SuperSuit.
 
-    {install}
+    pip install stable-baselines3 supersuit tensorboard
     python -m {pkg}.train
+    tensorboard --logdir runs   # its logs, charted
     python -m {pkg}.evaluate    # fly the trained policy
 
 ``train(n_processes=4)`` runs four copies of the env at once, one simulator
@@ -760,44 +787,62 @@ per process.
 
 from __future__ import annotations
 
-{stdlib}import gymnasium as gym
-{view_imports}from stable_baselines3 import PPO
-{recorder}
-from bluesky_sandbox.integrations import sb3_vec_env, wrap_parallel_env
-{sandbox}
+{head_imports}from bluesky_sandbox.integrations import sb3_vec_env, wrap_parallel_env
+
 from .env import {class_stem}Env
-{optional}{block}{actor_view}
+{package_imports}{actor_view}
 
 def make_env(render_mode=None):
     """The env as SB3 needs it: a fixed pool of agent IDs, intruders padded to
     a fixed shape."""
-{make}
+    env = {class_stem}Env(render_mode=render_mode){wrap_view}
     max_agents = env.unwrapped.scenario.support().max_aircraft
-    return wrap_parallel_env(env, max_agents=max_agents)
-{upload_callback}
+{wrapped}
 
 def train(
     total_timesteps: int = 100_000,
     seed: int = 0,
-    n_processes: int = {processes}{record_arg},
-) -> PPO:
+    n_processes: int = {processes}{cost_arg},
+    batch_size: int | None = None,
+    tensorboard_log: str | None = "runs",
+    save_every: int | None = 100_000,
+) -> {algo}:
     """Train, the episodes run in ``n_processes`` processes at once - BlueSky
     is one simulator per process - every agent of each an entry of SB3's
-    vector env.{record_doc}"""{guard}
-    vec = sb3_vec_env(make_env, n_processes{vec_record}){clips_open}
+    vector env.{cost_doc}
+    ``batch_size`` is PPO's minibatch (``None``: 64 for each agent slot).
+    What SB3 logs goes to ``tensorboard_log`` too (``None``: the console only).
+
+    The model is saved as ``ppo_{pkg}`` when training ends - or is stopped
+    with Ctrl+C - and every ``save_every`` agent steps in ``checkpoints/``
+    (``None``: only at the end)."""{guard}
+    # Each agent's episode reward and length, for SB3 to log.
+    vec = AgentEpisodes(sb3_vec_env(make_env, n_processes))
     # From here on the worker processes are running: close them whatever
     # happens, or this process cannot exit.
     try:
-        policy = "MultiInputPolicy" if isinstance(vec.observation_space, gym.spaces.Dict) else "MlpPolicy"
-        model = PPO(policy, vec, seed=seed, verbose=1)
-        {learn}
+        {policy}
+        checkpoints = None
+        if save_every:
+            # SB3 counts the vector env's steps, each one a step of every agent slot.
+            checkpoints = CheckpointCallback(
+                save_freq=max(1, save_every // vec.num_envs),
+                save_path="checkpoints",
+                name_prefix="ppo_{pkg}",
+            )
+        try:
+            model.learn(total_timesteps=total_timesteps, callback=checkpoints)
+        except KeyboardInterrupt:
+            print("Stopped: saving the model as it is.")
         model.save("ppo_{pkg}")
         return model
     finally:
-        vec.close(){drain}
+        vec.close()
 
 
-{main}'''
+if __name__ == "__main__":
+    train()
+'''
 
 
 def _step_unpack(has_cost: bool, indent: str) -> str:
@@ -817,7 +862,6 @@ def _train_py(
     privileged: bool,
     has_cost: bool,
     processes: int = 1,
-    record: RecordOptions | None = None,
 ) -> str:
     """``train.py``: how a training loop is arranged around this design's MDP.
 
@@ -911,7 +955,7 @@ with the reward, and a cost critic is bootstrapped beside the value.
         else f"buffer.bootstrap(agent, value({critic_next}))"
     )
     if processes > 1:
-        return _train_vec_py(pkg, class_stem, privileged, has_cost, processes, record)
+        return _train_vec_py(pkg, class_stem, privileged, has_cost, processes)
     loop = f"""    obs, _infos = env.reset(seed=seed)
 
     # Aircraft arrive on a schedule: wait for the first agent to size the nets.
@@ -945,36 +989,6 @@ with the reward, and a cost critic is bootstrapped beside the value.
 
     update({update_args})
 """
-    if record is None:
-        stdlib = sandbox = optional = block = ""
-        signature = "steps: int = 200, seed: int = 0"
-        body = f"    env = {class_stem}Env()\n{loop}"
-        main = "if __name__ == \"__main__\":\n    training_loop()\n"
-    else:
-        stdlib, sandbox, optional = recording_imports(record, clips=False)
-        imports = imports.rstrip("\n") + "\n" if imports else ""
-        sandbox += "\n"
-        block = recording_block(record, pkg) + f'''
-
-def make_env(record: bool):
-    """The env - recorded offscreen, as ``RECORDING`` says, with ``record``."""
-    if not record:
-        return {class_stem}Env()
-    env = {class_stem}Env(render_mode="rgb_array", frame_driver=FRAME_DRIVER, views=recorded_views())
-    return RecordVideo(env, RECORDING{", on_clip=upload" if record.uploads else ""})
-'''
-        signature = "steps: int = 200, seed: int = 0, record: bool = True"
-        # Closed however the loop ends: the clip it was recording is uploaded.
-        body = (
-            "    env = make_env(record)\n    try:\n"
-            + textwrap.indent(loop, "    ", lambda line: line.strip() != "")
-            + "    finally:\n        env.close()\n"
-        )
-        main = (
-            main_with_wandb("training_loop()")
-            if record.uploads
-            else "if __name__ == \"__main__\":\n    training_loop()\n"
-        )
     return f'''"""A training-loop scaffold for this task: what each network sees, and what
 a transition holds - the rest is yours.
 {views_note}{cost_note}
@@ -985,8 +999,8 @@ hooks. Run ``python -m {pkg}.train`` once the stubs are filled in, and
 
 from __future__ import annotations
 
-{stdlib}{imports}{sandbox}from .env import {class_stem}Env
-{optional}{block}
+{imports}from .env import {class_stem}Env
+
 
 def build_policy(observation_space):
     """Your actor, built from the ACTOR observation space."""
@@ -1013,10 +1027,13 @@ def update({update_args}):
     raise NotImplementedError("update: fit the networks on the collected rollout.")
 
 
-def training_loop({signature}) -> None:
-{body}
+def training_loop(steps: int = 200, seed: int = 0) -> None:
+    env = {class_stem}Env()
+{loop}
 
-{main}'''
+if __name__ == "__main__":
+    training_loop()
+'''
 
 
 def _train_vec_py(
@@ -1025,7 +1042,6 @@ def _train_vec_py(
     privileged: bool,
     has_cost: bool,
     processes: int,
-    record: RecordOptions | None = None,
 ) -> str:
     """``train.py`` for a training loop over copies of the env in parallel
     processes: the same arrangement as the one-env scaffold, over a vector env
@@ -1072,52 +1088,9 @@ def _train_vec_py(
         bootstrap_call = f"buffer.bootstrap(row, value({last_view}))"
         update_args = "policy, value, buffer"
         cost_lines = cost_value_build = cost_values_line = ""
-    record_note = ""
-    if record is None:
-        stdlib = sandbox = optional = block = ""
-        make = f"    env = {class_stem}Env(render_mode=render_mode)"
-        record_arg = vec_record = clips_open = upload_step = drain = ""
-        main = "if __name__ == \"__main__\":\n    training_loop()\n"
-    else:
-        record_note = (
-            "\n\nEvery copy records clips (``RECORDING``), "
-            + ("uploaded to wandb as they finish." if record.uploads else f"saved to {record.folder}/.")
-        )
-        stdlib, sandbox, optional = recording_imports(record, clips=True)
-        block = recording_block(record, pkg)
-        make = (
-            "    # A recorded copy draws offscreen, with the recording's driver and views.\n"
-            "    drawing = (\n"
-            "        {\"frame_driver\": FRAME_DRIVER, \"views\": recorded_views()}\n"
-            "        if render_mode == \"rgb_array\"\n"
-            "        else {}\n"
-            "    )\n"
-            f"    env = {class_stem}Env(render_mode=render_mode, **drawing)"
-        )
-        record_arg = ", record: bool = True"
-        vec_record = ", RECORDING if record else None"
-        clips_open = "\n    clips = Clips(RECORDING)" if record.uploads else ""
-        upload_step = (
-            "\n            for clip in clips.new():\n                upload(clip)" if record.uploads else ""
-        )
-        drain = (
-            (
-                "\n        # The clips the copies finished as they closed."
-                "\n        for clip in clips.new():"
-                "\n            upload(clip)"
-                "\n        clips.close()"
-            )
-            if record.uploads
-            else ""
-        )
-        main = (
-            main_with_wandb("training_loop()")
-            if record.uploads
-            else "if __name__ == \"__main__\":\n    training_loop()\n"
-        )
     return f'''"""A training-loop scaffold for this task, its episodes run in {processes}
 processes at once - BlueSky is one simulator per process - as one vector env
-whose entries are every agent of every copy, one row each.{record_note}
+whose entries are every agent of every copy, one row each.
 
 What each network sees and what a transition holds are fixed here; the
 networks, buffer and update are yours. A reward must be one number per agent
@@ -1128,17 +1101,17 @@ are filled in (``pip install bluesky-sandbox[parallel]``), and
 
 from __future__ import annotations
 
-{stdlib}import numpy as np
+import numpy as np
 
 {view_imports}from bluesky_sandbox.integrations import vec_env, wrap_parallel_env
-{sandbox}
+
 from .env import {class_stem}Env
-{optional}{block}
+
 
 def make_env(render_mode=None):
     """One copy, as the vector env takes it: a fixed pool of agent IDs, its
     intruders padded to a fixed shape. Each worker process builds its own."""
-{make}
+    env = {class_stem}Env(render_mode=render_mode)
     max_agents = env.unwrapped.scenario.support().max_aircraft
     return wrap_parallel_env(env, max_agents=max_agents)
 
@@ -1171,9 +1144,9 @@ def update({update_args}):
 
 
 def training_loop(
-    steps: int = 200, seed: int = 0, n_processes: int = {processes}{record_arg}
+    steps: int = 200, seed: int = 0, n_processes: int = {processes}
 ) -> None:
-    vec = vec_env(make_env, n_processes{vec_record}){clips_open}
+    vec = vec_env(make_env, n_processes)
     # From here on the worker processes are running: close them whatever
     # happens, or this process cannot exit.
     try:
@@ -1195,13 +1168,15 @@ def training_loop(
                 if truncations[row] and last is not None:
                     {bootstrap_call}
 
-            obs = next_obs{upload_step}
+            obs = next_obs
         update({update_args})
     finally:
-        vec.close(){drain}
+        vec.close()
 
 
-{main}'''
+if __name__ == "__main__":
+    training_loop()
+'''
 
 
 def _names_used(source: str) -> set[str]:
@@ -1433,7 +1408,16 @@ def _readme_md(
         "\nand what a transition holds. Fill in its stubs.\n",
         "sb3": "\n`train.py` trains every agent with one shared Stable-Baselines3 PPO policy"
         "\n(`pip install stable-baselines3 supersuit`); its docstring says what SB3 does"
-        "\ndifferently from this design.\n",
+        "\ndifferently from this design."
+        + (
+            " The policy reads the intruders with the network in `networks.py`,"
+            "\na transformer over the ownship and each intruder."
+            if env.intruder_obs_fields
+            else ""
+        )
+        + "\nThe algorithm is in `masked_ppo.py`"
+        + (" and `ppo_lagrangian.py`" if has_cost else "")
+        + ", and how the env is fitted\nto SB3 in `wrappers.py`: all yours to change.\n",
     }.get(template, "")
     version = str(meta.get("version", "") or "0")
     note = str(meta.get("note", "") or "").strip()

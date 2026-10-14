@@ -21,6 +21,27 @@ Separates critic observations from actor inputs, giving centralized critics acce
    :show-inheritance:
 ```
 
+## What an SB3 package carries
+
+How a task is trained with Stable-Baselines3 is the task package's own, not the
+library's: the designer writes it into each SB3 package, to read and change.
+
+- `wrappers.py`: the actions of a design of switches and choices as one
+  `MultiDiscrete`, and each agent's episode as SB3 logs it.
+- `masked_ppo.py`: `MaskedPPO`, PPO trained only on the agent slots that hold an
+  agent - it reads `info["_next_padded"]`, which `StableIDsParallelWrapper`
+  reports for every slot, and leaves padding out of the update.
+- `ppo_lagrangian.py`, with a cost: `PPOLagrangian`, `MaskedPPO` with each
+  agent's episode cost - the sum of its `info["cost"]` - kept under
+  `cost_limit`: a cost critic of its own, and a Lagrange multiplier on the
+  policy's advantages, raised by Adam while the episodes cost more than the
+  limit and lowered while they cost less, at a rate whatever the cost's units.
+- `networks.py`, with intruders: a transformer over the ownship and each
+  intruder, padded rows masked out.
+
+The library keeps what every trainer shares: the wrappers that give the env a
+fixed pool of agent slots (`wrap_parallel_env`) and the vector envs below.
+
 ## `bluesky_sandbox.integrations.vector`
 
 Episodes in parallel: BlueSky is one simulator per process, so each copy of the

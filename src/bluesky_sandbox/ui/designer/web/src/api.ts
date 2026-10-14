@@ -121,25 +121,9 @@ export interface GenerateResult {
   notes?: { level: "error" | "warning" | "info"; message: string }[];
   // The server machine's cores, for choosing how many processes to train in.
   cpus?: number;
-  // What clips can be recorded with: each driver's views, and the defaults.
-  recording?: RecordingCatalog;
   // The windows evaluate.py can draw the trained policy in.
   evaluation?: { render_modes: string[]; default: string };
 }
-
-export interface RecordingCatalog {
-  drivers: Record<string, { views: string[]; default: string[] }>;
-  destinations: string[];
-  defaults: {
-    every: number;
-    length: number;
-    fps: number;
-    driver: string;
-    upload: string;
-    folder: string;
-  };
-}
-
 
 // A field in a sampled observation: its raw value (per intruder row in an
 // intruder part), the columns the policy sees, and its range for this aircraft.

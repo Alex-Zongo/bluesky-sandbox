@@ -1657,7 +1657,15 @@ def test_an_unknown_template_is_refused():
 
 def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     plain = _templated("sb3")["train.py"]
-    assert "PPO(" in plain and "sb3_vec_env(make_env, n_processes)" in plain
+    assert "MaskedPPO(" in plain and "sb3_vec_env(make_env, n_processes)" in plain
+    # Trained only on the slots that hold an agent, not SB3's PPO on all of them.
+    assert "from .masked_ppo import MaskedPPO" in plain
+    assert "from stable_baselines3 import PPO" not in plain
+    assert "MaskedPPO.load(model_path)" in _templated("sb3")["evaluate.py"]
+    assert 'tensorboard_log: str | None = "runs"' in plain and "tensorboard_log=tensorboard_log," in plain
+    # Minibatches sized to the rollout, so the update uses the cores.
+    assert "batch_size: int | None = None" in plain
+    assert "batch_size = batch_size or 64 * vec.num_envs" in plain and "batch_size=batch_size," in plain
     assert "ActorView" not in plain and "raise NotImplementedError" not in plain
     ast.parse(plain)
 
@@ -1668,13 +1676,69 @@ def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     spec.env.hook_setup = "import numpy as np\n" + (spec.env.hook_setup or "")
     spec.env.hooks = {**spec.env.hooks, "cost": "return 0.0"}
     levels = sorted(n["level"] for n in codegen.sb3_notes(spec))
-    assert levels == ["error", "info", "warning", "warning"]
+    assert levels == ["error", "info", "info", "warning"]
     train = next(t for p, t in codegen.generate_task(spec, "Sb3").items() if p.endswith("train.py"))
     # A switch action blocks SB3: train() says so before building anything.
     guard = train.split("def train(", 1)[1].split("vec = ", 1)[0]
     assert "raise NotImplementedError(" in guard and "SB3 cannot train this design" in guard
     # The critic-only fields are dropped rather than shown to the actor.
     assert "env = ActorView(env)" in train
+    assert "MultiDiscreteActions" not in train
+
+
+def test_an_sb3_package_trains_switches_and_choices_as_one_multidiscrete():
+    spec = _example_design_spec()
+    spec.metadata["template"] = "sb3"
+    spec.env.action_fields = [S.FieldRef("AutopilotLnav")]
+    assert codegen.multi_discrete_actions(spec)
+    assert "error" not in {n["level"] for n in codegen.sb3_notes(spec)}
+    train = next(t for p, t in codegen.generate_task(spec, "Sb3").items() if p.endswith("train.py"))
+    assert "raise NotImplementedError" not in train
+    assert "return MultiDiscreteActions(wrap_parallel_env(env, max_agents=max_agents))" in train
+    assert "from .wrappers import AgentEpisodes, MultiDiscreteActions" in train
+    ast.parse(train)
+
+
+def test_an_sb3_package_with_a_cost_trains_under_a_cost_limit():
+    spec = _example_design_spec()
+    spec.metadata["template"] = "sb3"
+    spec.env.hooks = {**spec.env.hooks, "cost": "return 0.0"}
+    files = codegen.generate_task(spec, "Sb3")
+    train = next(t for p, t in files.items() if p.endswith("train.py"))
+    evaluate = next(t for p, t in files.items() if p.endswith("evaluate.py"))
+    assert "from .ppo_lagrangian import PPOLagrangian" in train
+    assert {"ppo_lagrangian.py", "masked_ppo.py"} <= {p.rsplit("/", 1)[1] for p in files}
+    assert "from .networks import IntruderTransformer" in train
+    assert "cost_limit: float = 0.0" in train and "cost_limit=cost_limit," in train
+    assert "lambda_lr: float = 0.035" in train and "lambda_lr=lambda_lr," in train
+    assert "-> PPOLagrangian:" in train and "from stable_baselines3 import PPO" not in train
+    assert "PPOLagrangian.load(model_path)" in evaluate
+    ast.parse(train)
+    ast.parse(evaluate)
+    # Without a cost, plain PPO.
+    plain = _templated("sb3")
+    assert "PPOLagrangian" not in plain["train.py"] + plain["evaluate.py"]
+
+
+def test_an_sb3_package_reads_its_intruders_with_a_transformer():
+    spec = _example_design_spec()
+    spec.metadata["template"] = "sb3"
+    assert spec.env.intruder_obs_fields
+    train = next(t for p, t in codegen.generate_task(spec, "Sb3").items() if p.endswith("train.py"))
+    assert "from .networks import IntruderTransformer" in train
+    # The actor and the value function each their own transformer.
+    assert (
+        'policy_kwargs={"features_extractor_class": IntruderTransformer, "share_features_extractor": False}'
+        in train
+    )
+    assert "import gymnasium" not in train
+    ast.parse(train)
+    # With no intruders, nothing to attend over: SB3's own policy.
+    spec.env.intruder_obs_fields = []
+    alone = next(t for p, t in codegen.generate_task(spec, "Sb3").items() if p.endswith("train.py"))
+    assert "IntruderTransformer" not in alone and "MultiInputPolicy" in alone
+    assert 'policy_kwargs={"share_features_extractor": False}' in alone
+    ast.parse(alone)
 
 
 def _run_as(template: str, processes: int) -> str:
@@ -1745,3 +1809,33 @@ def test_processes_below_one_are_refused():
     spec.metadata.update(template="rl", processes=0)
     with pytest.raises(ValueError, match="processes must be at least 1"):
         codegen.generate_task(spec, "Par")
+
+
+def test_an_sb3_package_carries_its_wrappers_and_network_as_its_own_source():
+    from bluesky_sandbox.ui.designer.package_files import masked_ppo, networks, wrappers
+
+    spec = _example_design_spec()
+    spec.metadata["template"] = "sb3"
+    files = codegen.generate_task(spec, "Sb3")
+    own = {p.rsplit("/", 1)[1]: t for p, t in files.items()}
+    # Copied whole from the tested modules, not imported from the library.
+    assert own["wrappers.py"] == Path(wrappers.__file__).read_text()
+    assert own["networks.py"] == Path(networks.__file__).read_text()
+    assert own["masked_ppo.py"] == Path(masked_ppo.__file__).read_text()
+    assert "ppo_lagrangian.py" not in own  # no cost, no constraint
+    assert "    vec = AgentEpisodes(sb3_vec_env(make_env, n_processes))" in own["train.py"]
+    # No intruders, no network.
+    spec.env.intruder_obs_fields = []
+    alone = {p.rsplit("/", 1)[1] for p in codegen.generate_task(spec, "Sb3")}
+    assert "wrappers.py" in alone and "networks.py" not in alone
+
+
+def test_an_sb3_package_saves_checkpoints_and_on_ctrl_c():
+    train = _templated("sb3")["train.py"]
+    assert "save_every: int | None = 100_000" in train
+    # Counted in agent steps: SB3's save_freq is in steps of every slot at once.
+    assert "save_freq=max(1, save_every // vec.num_envs)" in train
+    assert 'save_path="checkpoints"' in train
+    # Stopped by hand, what it learned is kept.
+    learn = train.split("model.learn(", 1)[1]
+    assert learn.index("except KeyboardInterrupt:") < learn.index('model.save("ppo_tmpl")')

@@ -72,8 +72,11 @@ _EPISODES = """    returns = []
 """
 
 
-def sb3_evaluate_py(pkg: str, render_mode: str | None) -> str:
-    """``evaluate.py`` for the SB3 package: the saved PPO policy, flown."""
+def sb3_evaluate_py(pkg: str, render_mode: str | None, *, constrained: bool = False) -> str:
+    """``evaluate.py`` for the SB3 package: the saved PPO policy, flown -
+    PPO-Lagrangian's, when the design is ``constrained`` by a cost."""
+    algo = "PPOLagrangian" if constrained else "MaskedPPO"
+    algo_import = f"\nfrom .{'ppo_lagrangian' if constrained else 'masked_ppo'} import {algo}"
     return f'''"""Fly the policy ``python -m {pkg}.train`` saved, episode by episode:
 
     python -m {pkg}.evaluate
@@ -84,8 +87,7 @@ def sb3_evaluate_py(pkg: str, render_mode: str | None) -> str:
 from __future__ import annotations
 
 import numpy as np
-from stable_baselines3 import PPO
-
+{algo_import}
 from .train import make_env
 
 {_render_mode_block(render_mode)}
@@ -100,7 +102,7 @@ def evaluate(
     """Fly ``episodes`` episodes, every agent acting as the policy would
     deterministically - each to its end, or ``max_steps`` steps; return each
     one's total reward."""
-    model = PPO.load(model_path)
+    model = {algo}.load(model_path)
     env = make_env(render_mode=render_mode)
 {_EPISODES.format(act="model.predict(ob, deterministic=True)[0]")}
 
