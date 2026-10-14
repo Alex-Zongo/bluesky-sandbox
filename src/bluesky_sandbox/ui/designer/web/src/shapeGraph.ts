@@ -8,7 +8,8 @@
 //   - a group: one whose moves bounce within it (a group holding a bounds
 //     contains it - `group` - but doesn't use it);
 //   - a waypoint anchored to it;
-//   - code: `ctx.shape("name")`, `shapes["name"]` - or the older `ctx.bounds`, `named_bounds`, `episode_bounds`.
+//   - code - hooks, scenario code, a spawn source's plan: `ctx.shape("name")`,
+//     `shapes["name"]` - or the older `ctx.bounds`, `named_bounds`, `episode_bounds`.
 // A ref to one of a partition's shapes (`sectors.0`) uses that partition.
 import type { SpecDict } from "./api";
 import type { EditTarget } from "./map/types";
@@ -76,6 +77,7 @@ function codeBlocks(spec: SpecDict): [string, string][] {
   walk("task info", spec.env?.task_info);
   walk("scenario setup", spec.scenario_setup);
   for (const [hook, body] of Object.entries(spec.scenario_hooks ?? {})) walk(`scenario ${hook}`, body);
+  (spec.spawn?.sources ?? []).forEach((source: SpecDict, i: number) => walk(`spawn source ${source?.name ?? i + 1}`, source?.plan));
   return out;
 }
 
