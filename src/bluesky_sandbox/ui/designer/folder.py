@@ -16,7 +16,8 @@ code.
 
 Each code file is a module: its functions named for a hook (``reward``), an
 entry ``design.json`` lists, a scenario hook (``episode_geometry``) or a spawn
-source's plan (``plan_<source>``) are those; everything else in it is its
+source's plan (``plan_<source>``) or a spawn region's route rule
+(``route_<region>``) are those; everything else in it is its
 setup - imports, constants, helpers. A block at the top of each, between the
 ``in scope`` markers, imports what the design has in scope there, so an editor
 or a linter reads the file as the design runs it; it is written each time and
@@ -65,6 +66,7 @@ _IN_SCOPE = "# >>> in scope, as the design runs it - written each save, never re
 _END_IN_SCOPE = "# <<< in scope"
 _TASK_INFO_ARGS = "(obs, action, info, context, rng)"
 _SOURCE_ARGS = "(rng, ctx)"
+_ROUTE_RULE_ARGS = "(request, rng, ctx)"
 
 
 class FolderError(ValueError):
@@ -165,6 +167,9 @@ def _structure(spec: DesignSpec) -> dict[str, Any]:
     spawn = d.get("spawn")
     if isinstance(spawn, dict) and spawn.get("sources"):
         spawn["sources"] = [{k: v for k, v in s.items() if k != "plan"} for s in spawn["sources"]]
+    if isinstance(spawn, dict) and spawn.get("regions"):
+        # A region's route rule is code: in scenario.py as route_<region>.
+        spawn["regions"] = [{k: v for k, v in r.items() if k != "route_rule"} for r in spawn["regions"]]
     return {"$schema": f"./{SCHEMA_FILE}", **d}
 
 
@@ -228,6 +233,10 @@ def _scenario_module(spec: DesignSpec) -> str:
     spawn = spec.spawn if isinstance(spec.spawn, dict) else {}
     for source in spawn.get("sources") or []:
         functions.append((f"plan_{source['name']}", _SOURCE_ARGS, source.get("plan") or "return []"))
+    for region in spawn.get("regions") or []:
+        rule = region.get("route_rule")
+        if isinstance(rule, str) and rule.strip():
+            functions.append((f"route_{region.get('name')}", _ROUTE_RULE_ARGS, rule))
     return _module(header, spec.scenario_setup, functions)
 
 
@@ -262,11 +271,17 @@ def read_folder(folder: str | Path) -> DesignSpec:
     spawn = d.get("spawn") if isinstance(d.get("spawn"), dict) else {}
     sources = spawn.get("sources") or []
     plans = {f"plan_{s['name']}" for s in sources}
-    setup, bodies = split_module(code(SCENARIO_FILE), set(SCENARIO_HOOKS) | set(d.get("scenario_hooks") or []) | plans, SCENARIO_FILE)
+    regions = [r for r in spawn.get("regions") or [] if isinstance(r, dict) and str(r.get("name") or "").isidentifier()]
+    rules = {f"route_{r['name']}" for r in regions}
+    names = set(SCENARIO_HOOKS) | set(d.get("scenario_hooks") or []) | plans | rules
+    setup, bodies = split_module(code(SCENARIO_FILE), names, SCENARIO_FILE)
     d["scenario_setup"] = setup
-    d["scenario_hooks"] = {name: body for name, body in sorted(bodies.items()) if name not in plans}
+    d["scenario_hooks"] = {name: body for name, body in sorted(bodies.items()) if name not in plans | rules}
     for source in sources:
         source["plan"] = bodies.get(f"plan_{source['name']}", "")
+    for region in regions:
+        if f"route_{region['name']}" in bodies:
+            region["route_rule"] = bodies[f"route_{region['name']}"]
 
     modules = d.get("code") or []
     if isinstance(modules, dict):  # a design.json written whole

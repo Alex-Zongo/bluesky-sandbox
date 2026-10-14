@@ -31,7 +31,16 @@ type SpawnBodyProps = {
   globalMaintainMinSepNm?: number | null;
   // The design's performance model: the types there are to pick from.
   performanceModel?: string;
+  // Open a code block in the Code tab, by its key there ("routerule:<region>").
+  onOpenCode?: (key: string) => void;
 };
+
+// A new route rule's body: the route of each aircraft the region draws.
+const ROUTE_RULE_SCAFFOLD = `# The route of one aircraft this region draws, as drawn: request.at is where
+# it appears; ctx the episode's shapes, queryables and airspace; rng its draws.
+# Return steps (waypoint names, or {"waypoint": name, ...}), a route's name, or None.
+return None
+`;
 
 // The grouped field editor for one spawn region (no card chrome). Spawn altitude
 // defaults to the bounds altitude band, but can be overridden explicitly.
@@ -49,6 +58,7 @@ export function SpawnBody({
   globalConflictFree,
   globalMaintainMinSepNm,
   performanceModel,
+  onOpenCode,
 }: SpawnBodyProps) {
   // The zone a conflict-free spawn is actually cleared against, from BlueSky's
   // CD rather than hardcoded here, so the buffers say what they are added to.
@@ -303,14 +313,58 @@ export function SpawnBody({
         </div>
       </FieldGroup>
       <FieldGroup title="Route">
-        <RouteSpecControl
-          label="route override"
-          route={region.route}
-          routeNames={routeNames}
-          waypointNames={waypointNames}
-          allowInherit
-          onChange={(route) => onChange({ ...region, route })}
-        />
+        {typeof region.route_rule === "string" ? (
+          <div className="route-control">
+            <label className="numfield inline">
+              <span>route</span>
+              <span className="muted small">a rule, in code</span>
+            </label>
+            <div className="small">
+              <button className="link" onClick={() => onOpenCode?.(`routerule:${region.name}`)}>
+                edit the rule
+              </button>
+              {" · "}
+              <button
+                className="link"
+                onClick={() => {
+                  const { route_rule: _rule, ...rest } = region;
+                  onChange(rest);
+                }}
+              >
+                remove it
+              </button>
+            </div>
+            <div className="muted small">
+              <code>assign_route(request, rng, ctx)</code> gives each aircraft its route from where it appears.
+            </div>
+          </div>
+        ) : (
+          <>
+            <RouteSpecControl
+              label="route override"
+              route={region.route}
+              routeNames={routeNames}
+              waypointNames={waypointNames}
+              allowInherit
+              onChange={(route) => onChange({ ...region, route })}
+            />
+            <button
+              className="link small"
+              disabled={!/^[A-Za-z_]\w*$/.test(region.name ?? "")}
+              title={
+                /^[A-Za-z_]\w*$/.test(region.name ?? "")
+                  ? "give each aircraft its route in code, from where it appears"
+                  : "a route rule names its code after the region: name it as a Python identifier first"
+              }
+              onClick={() => {
+                onChange({ ...region, route: null, route_rule: ROUTE_RULE_SCAFFOLD });
+                onOpenCode?.(`routerule:${region.name}`);
+              }}
+            >
+              + route rule (code)
+            </button>
+          </>
+        )}
       </FieldGroup>
       <FieldGroup title="Appearance">
         <VisualizationToggles

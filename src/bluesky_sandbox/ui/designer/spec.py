@@ -1009,6 +1009,8 @@ def _spawn_region_load(d: dict[str, Any]) -> SpawnRegion:
         callsign_prefixes=load_value(d.get("callsign_prefixes")),
         spawn_time=load_value(d.get("spawn_time", 0.0)),
         route=load_value(d.get("route")),
+        # The region's route rule, compiled by the builder (route_rule).
+        assign_route=d.get("assign_route"),
         name=d.get("name"),
         render_shape=d.get("render_shape", True),
         render_name=d.get("render_name", True),

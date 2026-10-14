@@ -278,6 +278,26 @@ export default function CodeTab({
   };
   const routeKeys: string[] = Object.keys(spec?.spawn?.routes ?? {});
 
+  // Route rules: a spawn region's route in code (spawn.regions[i].route_rule),
+  // added and removed from its card.
+  const ruledRegions: SpecDict[] = (spec?.spawn?.regions ?? []).filter(
+    (r: SpecDict) => typeof r?.route_rule === "string",
+  );
+  const selectedRule = selected.startsWith("routerule:")
+    ? ruledRegions.find((r) => r.name === selected.slice("routerule:".length)) ?? null
+    : null;
+  const setRule = (name: string, body: string | null) => {
+    if (!spec) return;
+    const regions = (spec.spawn?.regions ?? []).map((r: SpecDict) => {
+      if (r.name !== name) return r;
+      if (body != null) return { ...r, route_rule: body };
+      const { route_rule: _rule, ...rest } = r;
+      return rest;
+    });
+    onSpecChange({ ...spec, spawn: { ...(spec.spawn ?? {}), regions } });
+    if (body == null && selected === `routerule:${name}`) setSelected(SPEC_FILE);
+  };
+
   const setTaskInfoSetup = (body: string) => {
     if (!spec) return;
     onSpecChange({ ...spec, env: { ...spec.env, task_info_setup: body } });
@@ -381,6 +401,8 @@ export default function CodeTab({
       ? (scenarioHooks[selectedScenarioHook] ?? "")
     : selectedSource
       ? (selectedSource.plan ?? "")
+    : selectedRule
+      ? (selectedRule.route_rule ?? "")
     : isSpec
       ? specText
       : isCode
@@ -400,6 +422,8 @@ export default function CodeTab({
         ? `scenario_${selectedScenarioHook}.py`
       : selectedSource
         ? `spawn_source_${selectedSource.name}.py`
+      : selectedRule
+        ? `route_rule_${selectedRule.name}.py`
       : selected;
   const editorLanguage =
     selectedHook
@@ -409,6 +433,7 @@ export default function CodeTab({
     || selectedScenarioSetup
     || selectedScenarioHook
     || selectedSource
+    || selectedRule
       ? "python"
       : langOf(selected);
   const editorReadOnly =
@@ -420,6 +445,7 @@ export default function CodeTab({
     && !selectedScenarioSetup
     && !selectedScenarioHook
     && !selectedSource
+    && !selectedRule
     && (selectedTaskInfoEntry == null || selectedTaskInfoProviderReference);
 
   return (
@@ -572,6 +598,23 @@ export default function CodeTab({
           + spawn source
         </button>
 
+        <div className="tree-group">route rules</div>
+        {ruledRegions.map((r) => (
+          <FileItem
+            key={r.name}
+            path={r.name}
+            active={selectedRule?.name === r.name}
+            editable
+            onClick={() => setSelected(`routerule:${r.name}`)}
+            onDelete={() => setRule(r.name, null)}
+          />
+        ))}
+        {ruledRegions.length === 0 && (
+          <div className="muted small hook-add" title="add one on a spawn region's card, under Route">
+            a spawn region's, from its card
+          </div>
+        )}
+
         <div className="tree-group">generated{pkg ? ` · ${pkg}/` : ""}</div>
         {structuralFiles.map((p) => {
           const base = pkg && p.startsWith(`${pkg}/`) ? p.slice(pkg.length + 1) : p;
@@ -658,6 +701,16 @@ export default function CodeTab({
             )}
           </div>
         )}
+        {selectedRule && (
+          <div className="hook-sig small">
+            <code className="hook-sig-def">def assign_route(request, rng, ctx):</code>
+            <span className="hook-doc">
+              {" "}
+              the route of each aircraft spawn region {selectedRule.name} draws, as drawn - its steps, a route's
+              name, or None
+            </span>
+          </div>
+        )}
         {selectedSource && (
           <SourceHeader
             source={selectedSource}
@@ -680,6 +733,7 @@ export default function CodeTab({
             else if (selectedScenarioSetup) setScenarioSetup(v ?? "");
             else if (selectedScenarioHook) setScenarioHook(selectedScenarioHook, v ?? "");
             else if (selectedSource) updateSource(selectedSource.name, { plan: v ?? "" });
+            else if (selectedRule) setRule(selectedRule.name, v ?? "");
             else if (selectedTaskInfoSetup) setTaskInfoSetup(v ?? "");
             else if (selectedTaskInfoEntry != null && selectedTaskInfo != null) setTaskInfoBody(selectedTaskInfo, v ?? "");
             else if (isSpec) onSpecTextChange(v ?? "");

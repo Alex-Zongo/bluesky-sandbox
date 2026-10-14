@@ -156,6 +156,12 @@ validate and preview against the backend live.
     They also expose the `AgentStepContext`
     surface — `context.acid` / `context.acidx` / `context.data` /
     `context.separation` / `context.query("name")` — and `self.episode_queryables`.
+  - **Route rules** — a spawn region can route each aircraft it draws in code,
+    from where it appears: `+ route rule (code)` on its card writes the body of
+    `assign_route(request, rng, ctx)` (in the Code tab under route rules), which
+    returns steps or a route's name - for a route a list cannot say, such as a
+    straight track through a point drawn near the center. Spawn sources take the
+    same rule (`nearest_entry` is a built-in one).
   - **Composable routes (subroutes)** — a route step can be a waypoint *or*
     another route (`{"route": name}`), expanded inline at spawn (cycle-guarded).
     Build a shared `approach` segment once and reuse it across `arrival`s; the
@@ -302,12 +308,14 @@ my_design/
   code/
     hooks.py           # the env hooks, as functions, after their setup
     task_info.py       # the task-info entries, as functions, after their setup
-    scenario.py        # scenario setup, scenario hooks, each spawn source's plan_<name>
+    scenario.py        # scenario setup, scenario hooks, each spawn source's plan_<name>,
+                       # each spawn region's route rule route_<region>
     custom_fields.py   # the design's own modules, as they are
 ```
 
 In each code file, a function named for a hook (`reward`), a task-info entry,
-a scenario hook (`episode_geometry`) or a spawn source (`plan_<name>`) is that;
+a scenario hook (`episode_geometry`), a spawn source (`plan_<name>`) or a spawn
+region's route rule (`route_<region>`) is that;
 everything else is its setup. The block between the `in scope` markers at the
 top imports what the design has in scope there, so an editor or linter reads
 the file as the design runs it; it is rewritten on every save and never read

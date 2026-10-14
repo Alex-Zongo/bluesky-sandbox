@@ -17,7 +17,7 @@ from bluesky_sandbox.sim.spawn import SpawnConfig
 
 from . import setup_code
 from . import spec as _spec
-from .builder import SPAWN_SOURCE_ARGS, expand_region_members, spawn_sources_of
+from .builder import ROUTE_RULE_ARGS, SPAWN_SOURCE_ARGS, expand_region_members, route_rules_of, spawn_sources_of
 from .spec import (
     DesignSpec,
     EnvSpec,
@@ -396,6 +396,8 @@ class _Emitter:
             lines.append(f"        spawn_time={self.value(d['spawn_time'])},")
         if d.get("route") is not None:
             lines.append(f"        route={self.value(d['route'])},")
+        if isinstance(d.get("route_rule"), str) and d["route_rule"].strip():
+            lines.append(f"        assign_route=_route_{d['name']},")
         if d.get("name"):
             lines.append(f"        name={d['name']!r},")
         if d.get("maintain"):
@@ -772,12 +774,24 @@ def _emit_transform(em: _Emitter, spec: DesignSpec) -> str:
 
 
 def _emit_spawn_sources(spec: DesignSpec) -> str:
-    """The design's spawn sources at module scope: each one's ``plan`` as a
-    function, and ``SPAWN_SOURCES`` - each a ``PlannedSource`` with its
-    policies - which the spawn config takes. Empty with none."""
+    """The design's spawn code at module scope: each spawn region's route rule
+    as ``_route_<region>`` (its ``assign_route``), each spawn source's
+    ``plan`` as a function, and ``SPAWN_SOURCES`` - each a ``PlannedSource``
+    with its policies - which the spawn config takes. Empty with none."""
     sources = spawn_sources_of(spec)
-    if not sources:
+    rules = route_rules_of(spec)
+    if not sources and not rules:
         return ""
+    rule_blocks = []
+    for _index, name, body in rules:
+        indented = "\n".join(("    " + ln) if ln.strip() else "" for ln in body.rstrip().splitlines())
+        rule_blocks.append(
+            f"def _route_{name}({', '.join(ROUTE_RULE_ARGS)}):\n"
+            f'    """Spawn region {name!r}: the route each of its aircraft flies."""\n{indented}\n'
+        )
+    out = "\n\n# Route rules: each gives its spawn region's aircraft their routes.\n" + "\n\n".join(rule_blocks) if rules else ""
+    if not sources:
+        return out
     blocks, entries = [], []
     for d in sources:
         name = d["name"]
@@ -802,7 +816,8 @@ def _emit_spawn_sources(spec: DesignSpec) -> str:
             policies.append(f"max_aircraft={int(d['max_aircraft'])!r}")
         entries.append(f"    PlannedSource(_plan_{name}, {', '.join(policies)}),")
     return (
-        "\n\n# Spawn sources: each plans its aircraft at reset.\n"
+        out
+        + "\n\n# Spawn sources: each plans its aircraft at reset.\n"
         + "\n\n".join(blocks)
         + "\n\nSPAWN_SOURCES = [\n"
         + "\n".join(entries)

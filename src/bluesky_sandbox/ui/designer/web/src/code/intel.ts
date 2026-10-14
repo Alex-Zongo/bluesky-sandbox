@@ -282,6 +282,8 @@ export function scopeKey(path: string): string | null {
   if (file === "scenario_setup.py") return "scenario_setup";
   const source = file.match(/^spawn_source_(.+)\.py$/);
   if (source) return `spawn_source:${source[1]}`;
+  const rule = file.match(/^route_rule_(.+)\.py$/);
+  if (rule) return `route_rule:${rule[1]}`;
   const hook = file.match(/^hook_(.+)\.py$/);
   if (hook) return `hook:${hook[1]}`;
   if (/^task_info_.+\.py$/.test(file)) return "task_info";

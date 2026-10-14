@@ -55,3 +55,16 @@ def plan(rng: np.random.Generator, ctx: PlanContext) -> list[SpawnRequest]:
 
 #: A spawn source's ``plan``: its typed signature.
 SPAWN_SOURCE_SIGNATURE = plan
+
+
+def assign_route(request: SpawnRequest, rng: np.random.Generator, ctx: PlanContext) -> list | str | None:
+    """The route of one aircraft a spawn region draws, as drawn: where it
+    appears (``request.at``), its altitude, speed and heading - from the
+    episode's geometry (``ctx``: shapes, queryables, airspace, spawn config)
+    and any draw of ``rng``. Steps (waypoint names, or ``{"waypoint": name,
+    ...}`` steps), a key into the spawn config's routes, or None."""
+    return None
+
+
+#: A spawn region's route rule: its typed signature.
+ROUTE_RULE_SIGNATURE = assign_route

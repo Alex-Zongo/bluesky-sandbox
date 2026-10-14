@@ -519,6 +519,11 @@ def _scopes(
     for source in spawn.get("sources") or []:
         if isinstance(source, dict) and source.get("name"):
             scopes[f"spawn_source:{source['name']}"] = {"params": plan_params, "names": scenario_names}
+    # A spawn region's route rule: its (request, rng, ctx) typed.
+    rule_params = _params(scenario_api.ROUTE_RULE_SIGNATURE, table)
+    for region in spawn.get("regions") or []:
+        if isinstance(region, dict) and region.get("name"):
+            scopes[f"route_rule:{region['name']}"] = {"params": rule_params, "names": scenario_names}
     for filename, source in (spec.code or {}).items():
         stem = filename.removesuffix(".py")
         code_module = sys.modules.get(stem)

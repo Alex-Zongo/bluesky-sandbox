@@ -24,7 +24,8 @@ import math
 import sys
 import textwrap
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any
 
@@ -507,22 +508,43 @@ def _resolved_geometry(
     return airspace, queryables, spawn
 
 
+@dataclass(frozen=True)
+class SpawnCode:
+    """The design's spawn code, compiled (:func:`compile_scenario_code`): its
+    spawn sources, and its regions' route rules by region index."""
+
+    sources: tuple[SpawnSource, ...] = ()
+    route_rules: Mapping[int, Callable[..., Any]] = field(default_factory=dict)
+
+
 def _materialize(
     spec: DesignSpec,
-    sources: Sequence[Any] = (),
+    code: SpawnCode = SpawnCode(),
 ) -> tuple[Bounds | None, dict[str, Queryable], SpawnConfig]:
     airspace_d, queryables_d, spawn_d = _resolved_geometry(spec)
     airspace = _spec.load(airspace_d) if airspace_d is not None else None
     queryables = {name: _spec.load(q) for name, q in queryables_d.items()}
     if not isinstance(spawn_d, dict):
         raise BuildError("DesignSpec.spawn must be a spawn_config spec dict.")
-    spawn = _spec.load(spawn_d)
+    if code.route_rules:
+        # Each region's route rule on it as it is built, so the spawn config
+        # checks it routed (its aircraft heading toward their route).
+        spawn_d = {
+            **spawn_d,
+            "regions": [
+                {**r, "assign_route": code.route_rules[i]} if i in code.route_rules else r
+                for i, r in enumerate(spawn_d.get("regions", []))
+            ],
+        }
+    try:
+        spawn = _spec.load(spawn_d)
+    except ValueError as e:
+        raise BuildError(f"spawn: {e}") from e
     if not isinstance(spawn, SpawnConfig):
         raise BuildError("DesignSpec.spawn did not resolve to a SpawnConfig.")
     _load_route_step_sample_bounds(spawn)
-    # The design's spawn sources (compile_scenario_code): its aircraft beyond
-    # the regions'.
-    spawn.sources = list(sources)
+    # The design's spawn sources: its aircraft beyond the regions'.
+    spawn.sources = list(code.sources)
     return airspace, queryables, spawn
 
 
@@ -755,7 +777,7 @@ def _make_episode_geometry_fn(
     spec: DesignSpec,
     dists: dict[str, dict[str, Any]],
     region_sink: dict[str, Bounds],
-    sources: Sequence[Any] = (),
+    code: SpawnCode = SpawnCode(),
 ) -> Callable[[Any], dict[str, Any]]:
     """Per-episode geometry rebuild for sampled region params and generated
     regions.
@@ -777,7 +799,7 @@ def _make_episode_geometry_fn(
                 _spec.set_footprint_param(fp, path, _t.sample_scalar(value, rng))
         # Generated regions: drawn, and written back so refs resolve to them.
         drawn = _draw_generated(sub, rng)
-        airspace, queryables, spawn = _materialize(sub, sources)
+        airspace, queryables, spawn = _materialize(sub, code)
         region_sink.clear()
         region_sink.update(drawn)
         return {
@@ -793,10 +815,11 @@ def _make_episode_geometry_fn(
 
 def compile_scenario_code(
     spec: DesignSpec,
-) -> tuple[dict[str, Callable[..., Any]], list[SpawnSource]]:
-    """Compile ``scenario_setup``, ``scenario_hooks`` and the spawn sources'
-    ``plan`` code into callables - the hooks by name, and each source as a
-    :class:`PlannedSource` with its policies.
+) -> tuple[dict[str, Callable[..., Any]], SpawnCode]:
+    """Compile ``scenario_setup``, ``scenario_hooks``, the spawn sources'
+    ``plan`` code and the spawn regions' ``route_rule`` code into callables -
+    the hooks by name, each source as a :class:`PlannedSource` with its
+    policies, and each rule as its region's ``assign_route``.
 
     The designer's live preview builds a scenario straight from the spec rather
     than from generated code, so without this the hooks would run in the
@@ -812,8 +835,9 @@ def compile_scenario_code(
     """
     hooks = {k: v for k, v in (spec.scenario_hooks or {}).items() if v.strip()}
     sources = spawn_sources_of(spec)
-    if not hooks and not sources:
-        return {}, []
+    rules = route_rules_of(spec)
+    if not hooks and not sources and not rules:
+        return {}, SpawnCode()
     # The library names the generated scenario.py imports, so a hook runs here
     # with what it has there (setup_code.SCENARIO_API).
     namespace: dict[str, Any] = dict(setup_code.scenario_api_names())
@@ -847,7 +871,16 @@ def compile_scenario_code(
             planned.append(PlannedSource(plan, **spawn_source_policies(d)))
         except (TypeError, ValueError) as e:
             raise BuildError(f"spawn source {name!r}: {e}") from e
-    return out, planned
+    compiled_rules: dict[int, Callable[..., Any]] = {}
+    for index, name, body in rules:
+        filename = f"<route_rule:{name}>"
+        source = f"def _rule({', '.join(ROUTE_RULE_ARGS)}):\n" + textwrap.indent(body, "    ")
+        try:
+            exec(compile(source, filename, "exec"), namespace)
+        except Exception as e:
+            raise _scenario_code_error(e, filename, f"route rule of spawn region {name}", shift=1) from e
+        compiled_rules[index] = _reporting(namespace.pop("_rule"), filename, f"route rule of spawn region {name}")
+    return out, SpawnCode(tuple(planned), compiled_rules)
 
 
 def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
@@ -857,6 +890,33 @@ def compile_scenario_hooks(spec: DesignSpec) -> dict[str, Callable[..., Any]]:
 
 #: A spawn source's ``plan`` parameters, in the design and the generated package.
 SPAWN_SOURCE_ARGS = ("rng", "ctx")
+#: A spawn region's route rule's parameters - ``assign_route(request, rng, ctx)``.
+ROUTE_RULE_ARGS = ("request", "rng", "ctx")
+
+
+def route_rules_of(spec: DesignSpec) -> list[tuple[int, str, str]]:
+    """The design's spawn regions with a route rule (``route_rule``, the body
+    of ``assign_route(request, rng, ctx)``): ``(region index, name, body)``.
+    Named for the code - a region with a rule needs a name that is a Python
+    identifier - and routed by the rule alone."""
+    spawn = spec.spawn if isinstance(spec.spawn, dict) else {}
+    out: list[tuple[int, str, str]] = []
+    for i, r in enumerate(spawn.get("regions") or []):
+        body = (r or {}).get("route_rule")
+        if not isinstance(body, str) or not body.strip():
+            continue
+        name = str(r.get("name") or "")
+        if not name.isidentifier():
+            raise BuildError(
+                f"spawn region {name or i + 1!r} has a route rule: its name must be a "
+                "Python identifier, which names the rule's code."
+            )
+        if r.get("route") is not None:
+            raise BuildError(f"spawn region {name!r} takes its route or a route rule, not both.")
+        if any(o[1] == name for o in out):
+            raise BuildError(f"two spawn regions with route rules are named {name!r}.")
+        out.append((i, name, body))
+    return out
 
 
 def spawn_sources_of(spec: DesignSpec) -> list[dict[str, Any]]:
@@ -1187,21 +1247,21 @@ def build_scenario(spec: DesignSpec) -> DesignScenario:
     # (representative shapes); the episode hook refreshes it with each sample's
     # drawn shapes. Exposed on the scenario as ``design_regions``.
     region_sink = _load_named_regions(spec)
-    scenario_hooks, sources = compile_scenario_code(spec)
+    scenario_hooks, spawn_code = compile_scenario_code(spec)
     if region_dists or scenario_hooks or generated:
         # Static geometry = endpoint-union support of the sampled shapes, so
         # support() covers every episode; the hook rebuilds per episode.
         support_spec = (
             _support_substituted_spec(spec, region_dists) if region_dists else spec
         )
-        airspace, queryables, spawn = _materialize(support_spec, sources)
+        airspace, queryables, spawn = _materialize(support_spec, spawn_code)
         sampled_waypoints = _sampled_waypoint_regions(support_spec)
         named_bounds = _load_named_regions(support_spec)
         episode_geometry_fn = _make_episode_geometry_fn(
-            spec, region_dists, region_sink, sources
+            spec, region_dists, region_sink, spawn_code
         )
     else:
-        airspace, queryables, spawn = _materialize(spec, sources)
+        airspace, queryables, spawn = _materialize(spec, spawn_code)
         sampled_waypoints = _sampled_waypoint_regions(spec)
         named_bounds = _load_named_regions(spec)
         episode_geometry_fn = None

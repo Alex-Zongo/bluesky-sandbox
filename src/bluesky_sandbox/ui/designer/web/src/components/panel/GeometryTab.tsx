@@ -876,6 +876,7 @@ export default function GeometryTab({
             <LockableBody locked={lockedElements.has(`spawn:${sel.index}`)}>
               <SpawnBody
                 region={spawnRegions[sel.index]}
+                onOpenCode={onOpenCode}
                 performanceModel={spec.env?.performance_model ?? "openap"}
                 globalConflictFree={spec.spawn?.conflict_free_spawn === true}
                 globalMaintainMinSepNm={

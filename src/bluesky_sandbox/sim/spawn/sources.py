@@ -15,8 +15,9 @@ Each source carries what applies to its aircraft whatever their origin:
   ``"skip"`` (drop it) or ``"allow"`` (spawn it anyway - the same as not
   conflict-free: a faithful replay of data that had conflicts);
 - ``route`` - the route of a request that names none (steps, or a key into the
-  spawn config's ``routes``); ``assign_route`` - or a function choosing one,
-  such as :func:`nearest_entry`;
+  spawn config's ``routes``); ``assign_route`` - or a rule choosing one,
+  ``assign_route(request, rng, ctx)``, such as :func:`nearest_entry`. A spawn
+  region takes the same two (:class:`RouteAssignment`);
 - ``max_aircraft`` - the most it plans, counted into the episode's max
   aircraft (``None``: not counted - as for code spawns, ``aircraft_cap`` sizes
   the episode then).
@@ -111,7 +112,31 @@ class PlanContext:
     spawn: Any = None
 
 
-class SpawnSource(ABC):
+class RouteAssignment:
+    """The route an aircraft flies when it is drawn with none - what a spawn
+    region and a spawn source share: ``route`` (steps, or a key into the spawn
+    config's ``routes``), else the one ``assign_route(request, rng, ctx)``
+    chooses - a rule of the aircraft as drawn (where it appears, its heading),
+    the episode's geometry (``ctx``) and the episode's random draws (``rng``),
+    such as :func:`nearest_entry` or one a design writes. Applied once, as the
+    episode is planned (:meth:`~.regions.SpawnConfig.resolved`)."""
+
+    route: Any = None
+    assign_route: Callable[[SpawnRequest, np.random.Generator, PlanContext], Any] | None = None
+
+    def route_for(self, request: SpawnRequest, rng: np.random.Generator, ctx: PlanContext) -> Any:
+        """The route ``request`` flies: its own, else :attr:`route`, else the
+        one :attr:`assign_route` chooses."""
+        if request.route is not None:
+            return request.route
+        if self.route is not None:
+            return self.route
+        if self.assign_route is not None:
+            return self.assign_route(request, rng, ctx)
+        return None
+
+
+class SpawnSource(RouteAssignment, ABC):
     """Plans an episode's aircraft at reset. See the module docstring."""
 
     name: str = ""
@@ -119,8 +144,6 @@ class SpawnSource(ABC):
     aircraft_type: Any = None
     conflict_free: bool = False
     when_blocked: WhenBlocked = "defer"
-    route: Any = None
-    assign_route: Callable[[SpawnRequest, PlanContext], Any] | None = None
     max_aircraft: int | None = None
 
     @abstractmethod
@@ -139,17 +162,6 @@ class SpawnSource(ABC):
         :class:`Mixture`. By default one of its plan's, at random."""
         planned = self.plan(rng, ctx)
         return planned[int(rng.integers(len(planned)))] if planned else None
-
-    def route_for(self, request: SpawnRequest, ctx: PlanContext) -> Any:
-        """The route ``request`` flies: its own, else the source's, else the
-        one ``assign_route`` chooses."""
-        if request.route is not None:
-            return request.route
-        if self.route is not None:
-            return self.route
-        if self.assign_route is not None:
-            return self.assign_route(request, ctx)
-        return None
 
     def sample_type(self, rng: np.random.Generator) -> str:
         """A type for a request naming none, from :attr:`aircraft_type`."""
@@ -242,7 +254,7 @@ class Mixture(SpawnSource):
         request = source.draw(rng, ctx)
         if request is not None and request.route is None:
             # A component's own route rules travel with its aircraft.
-            request = replace(request, route=source.route_for(request, ctx))
+            request = replace(request, route=source.route_for(request, rng, ctx))
         return request
 
     def plan(self, rng: np.random.Generator, ctx: PlanContext) -> list[SpawnRequest]:
@@ -263,8 +275,8 @@ class RegionSource(SpawnSource):
     """Aircraft drawn as ``region`` (a :class:`SpawnRegion`) draws its own -
     position, altitude, speed, heading, type, route - its count each episode.
     For a :class:`Mixture` of random traffic and your own: the region need not
-    be one of the spawn config's. Conflict-free as the region is; blocked
-    spawns are drawn again."""
+    be one of the spawn config's. Conflict-free as the region is, routed by its
+    rule (``assign_route``) when it has one; blocked spawns are drawn again."""
 
     def __init__(self, region: Any, **policies: Any) -> None:
         self.region = region
@@ -272,6 +284,8 @@ class RegionSource(SpawnSource):
         self.when_blocked = "resample"
         self.name = getattr(region, "name", "") or ""
         self._policies(**policies)
+        if self.assign_route is None:
+            self.assign_route = getattr(region, "assign_route", None)
         if self.max_aircraft is None:
             self.max_aircraft = int(region.max_n())
 
@@ -291,13 +305,14 @@ class RegionSource(SpawnSource):
         return None if again is None else replace(again, time_s=request.time_s)
 
 
-def nearest_entry(request: SpawnRequest, ctx: PlanContext) -> str | None:
+def nearest_entry(request: SpawnRequest, rng: np.random.Generator, ctx: PlanContext) -> str | None:
     """The route (a key into the spawn config's ``routes``) whose first fix is
     nearest the aircraft - among those ahead of it, when it has a heading (the
     fix within 90 degrees of where it points). ``None`` with no route to give.
 
     For data with no routes of its own - ADS-B tracks: each aircraft joins the
-    procedure it is entering."""
+    procedure it is entering. Draws nothing from ``rng``."""
+    del rng
     routes: Mapping[str, Any] = getattr(ctx.spawn, "routes", None) or {}
     best: tuple[float, str] | None = None
     for key, spec in routes.items():

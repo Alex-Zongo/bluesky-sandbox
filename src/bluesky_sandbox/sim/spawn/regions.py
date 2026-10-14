@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -37,7 +37,7 @@ from bluesky_sandbox.sim.sampling.distributions import (
 
 from .heading import TowardRoute, is_toward_route
 from .routes import Route, RouteSpec, RouteStep, sample_route_path
-from .sources import PlanContext, PlannedSpawn, SpawnRequest
+from .sources import PlanContext, PlannedSpawn, RouteAssignment, SpawnRequest
 
 _SPAWN_BOUND_KEYS = ("lat_deg", "lon_deg", "alt_ft", "spd_kts")
 # ``alt_ft`` is optional: when omitted, the spawn altitude is sampled from the
@@ -113,7 +113,7 @@ def param_alt_range(alt_p) -> tuple[float, float] | None:
 
 @renamed(bounds="shape")
 @dataclass
-class SpawnRegion:
+class SpawnRegion(RouteAssignment):
     """A spatial region with its own aircraft count and scalar spawn distributions.
 
     Parameters
@@ -174,6 +174,13 @@ class SpawnRegion:
         Per-region route override. Use a fixed list of waypoint queryable names,
         a named route key from :class:`SpawnConfig.routes`, or a distribution that
         samples a named route key. ``None`` inherits :class:`SpawnConfig.route`.
+    assign_route:
+        A rule giving each of the region's aircraft its route instead:
+        ``assign_route(request, rng, ctx)`` - of the aircraft as drawn (where it
+        appears, its heading), the episode's geometry (``ctx``) and its draws
+        (``rng``) - returning steps or a key into :attr:`SpawnConfig.routes`.
+        For a route that depends on where its aircraft appears, as a list
+        cannot. Not with ``route``. See :class:`~.sources.RouteAssignment`.
     name:
         Optional human-readable label for this region.  Used as the polygon
         label drawn on the radar; falls back to ``"SPAWN i"`` when ``None``.
@@ -232,6 +239,7 @@ class SpawnRegion:
     callsign_prefixes: list[str] | TypeDistribution | None = field(default=None)
     spawn_time:        float | tuple[float, float] | ParamDistribution = 0.0
     route:             RouteSpec | str | TypeDistribution | None = None
+    assign_route:      Callable[[SpawnRequest, np.random.Generator, PlanContext], Any] | None = None
     name:              str | None = field(default=None)
     render_shape:      bool = True
     render_name:       bool = True
@@ -251,6 +259,10 @@ class SpawnRegion:
     spawn_gap_s: float | None = None
 
     def __post_init__(self) -> None:
+        if self.route is not None and self.assign_route is not None:
+            raise ValueError(
+                f"Spawn region {self.name or ''} takes its route or a rule (assign_route), not both."
+            )
         invalid = [k for k in self.params if k not in _SPAWN_PARAM_KEYS]
         if invalid:
             raise ValueError(
@@ -615,7 +627,8 @@ class SpawnConfig:
                     f"SpawnConfig.{name} must be a positive integer, got {value!r}."
                 )
         for i, region in enumerate(self.regions):
-            if is_toward_route(region.params.get("hdg_deg")) and region.route is None and self.route is None:
+            routed = region.route is not None or region.assign_route is not None or self.route is not None
+            if is_toward_route(region.params.get("hdg_deg")) and not routed:
                 raise ValueError(
                     f"Spawn region {region.name or i} heads toward its route (TowardRoute) but has no route."
                 )
@@ -778,6 +791,9 @@ class SpawnConfig:
         ordered list of steps (bare waypoint names, plus ``{"waypoint": ...}``
         steps for any per-step crossing restrictions).
         """
+        if region.route is None and region.assign_route is not None:
+            # Its rule's, once the aircraft is drawn (:meth:`region_request`).
+            return None
         spec = region.route if region.route is not None else self.route
         return self.resolve_route_spec(spec, rng)
 
@@ -840,6 +856,24 @@ class SpawnConfig:
             callsign_prefix=prefix,
         )
 
+    def region_request(
+        self, region: SpawnRegion | int, rng: np.random.Generator, ctx: PlanContext
+    ) -> SpawnRequest:
+        """One aircraft as ``region`` draws it (:meth:`draw_request`), routed:
+        by the region's rule when it has one (:meth:`routed`)."""
+        if not isinstance(region, SpawnRegion):
+            region = self.regions[int(region)]
+        return self.routed(self.draw_request(region, rng), region, rng, ctx)
+
+    def routed(
+        self, request: SpawnRequest, region: SpawnRegion, rng: np.random.Generator, ctx: PlanContext
+    ) -> SpawnRequest:
+        """``request``, drawn by ``region``, with the route its rule gives it -
+        when the region has one, as :meth:`resolved` routes a source's."""
+        if request.route is not None or region.assign_route is None:
+            return request
+        return self.resolved(request, rng, ctx, region)
+
     def iter_requests(
         self,
         rng: np.random.Generator,
@@ -890,7 +924,7 @@ class SpawnConfig:
     ) -> SpawnRequest:
         """``request`` with its type drawn when it names none and its route -
         its own, else its ``source``'s - resolved to concrete steps."""
-        route = source.route_for(request, ctx) if source is not None else request.route
+        route = source.route_for(request, rng, ctx) if source is not None else request.route
         actype = request.actype
         if actype is None and getattr(source, "aircraft_type", None) is not None:
             actype = source.sample_type(rng)
@@ -911,7 +945,7 @@ class SpawnConfig:
         rest dropped at random. What the environment queues at reset, and what
         the designer's preview shows."""
         planned = [
-            PlannedSpawn(request, region_index=index)
+            PlannedSpawn(self.routed(request, self.regions[index], rng, ctx), region_index=index)
             for index, request in self.iter_requests(rng, limit=limit, include_maintain=include_maintain)
         ]
         for index, source in enumerate(self.sources):

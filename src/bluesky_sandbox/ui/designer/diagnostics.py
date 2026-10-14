@@ -102,6 +102,10 @@ def _blocks(spec: DesignSpec) -> Iterator[Block]:
         body = (source or {}).get("plan") or ""
         if body.strip():
             yield Block(f"spawn_source:{source.get('name')}", body, scenario_names, ("rng", "ctx"))
+    for region in spawn.get("regions") or []:
+        body = (region or {}).get("route_rule") or ""
+        if body.strip():
+            yield Block(f"route_rule:{region.get('name')}", body, scenario_names, ("request", "rng", "ctx"))
     for filename, source in (spec.code or {}).items():
         if filename.endswith(".py"):
             yield Block(f"code:{filename}", source, frozenset())

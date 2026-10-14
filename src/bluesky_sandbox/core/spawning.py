@@ -161,9 +161,10 @@ class SpawnGenerator:
         source when it resamples - at the same time; ``None`` when it cannot be."""
         spawn = self.env.episode_spawn
         if item.region_index >= 0:
+            ctx = self.plan_context()
 
             def again(blocked: SpawnQueueItem) -> SpawnQueueItem:
-                request = replace(spawn.draw_request(item.region_index, rng), time_s=blocked.spawn_time)
+                request = replace(spawn.region_request(item.region_index, rng, ctx), time_s=blocked.spawn_time)
                 return self.item_from_request(request, region_index=item.region_index)
 
             return again
@@ -462,7 +463,8 @@ class SpawnGenerator:
         sep_nm, sep_ft, look_s = spawn.region_spawn_separation(region_index)
         now = self.env._runtime.sim_time
         item = self.item_from_request(
-            replace(spawn.draw_request(region_index, rng), time_s=now), region_index=region_index
+            replace(spawn.region_request(region_index, rng, self.plan_context()), time_s=now),
+            region_index=region_index,
         )
         cleared = self._cleared(
             item,
