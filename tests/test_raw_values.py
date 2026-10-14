@@ -65,7 +65,7 @@ def env():
             obs.FlightPhaseOneHot(),
         ],
         intruder_obs_fields=[obs.DistToOwnNm(), obs.AltFt()],
-        critic_intruder_obs_fields=[obs.TcpaS()],
+        critic_intruder_obs_fields=[obs.ConflictTcpaS()],
         action_fields=[
             act.HdgDeltaDeg(normalizer=SymmetricNormalizer()),
             act.AltDeltaFt(
@@ -127,7 +127,7 @@ def test_intruder_row_i_is_the_observations_intruder_i(env, agents):
 def test_every_configured_part_is_there(env, agents):
     raw = env.raw_observation(agents[0])
     assert list(raw) == ["ownship", "intruders", "critic_intruders"]
-    assert len(raw["critic_intruders"]["tcpa_s"]) == len(agents) - 1
+    assert len(raw["critic_intruders"]["conflict_tcpa_s"]) == len(agents) - 1
     with pytest.raises(KeyError, match="critic_ownship"):
         raw["critic_ownship"]
 

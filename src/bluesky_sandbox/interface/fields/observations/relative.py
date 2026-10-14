@@ -1,7 +1,10 @@
 """Another aircraft relative to the ownship: its position and motion, the
 closest point of approach, and shared route fixes.
 
-Pair fields, so ``intruder_obs_fields`` only.
+Pair fields, so ``intruder_obs_fields`` only. Position and motion come from the
+shared pair geometry (:func:`~bluesky_sandbox.sim.geometry.conflict.conflict_geometry`),
+on the flat-earth projection BlueSky's conflict detection measures on, so they
+describe the encounter the detector sees.
 """
 
 from __future__ import annotations
@@ -13,31 +16,25 @@ from typing import Annotated, Any
 import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts, nm
-from bluesky.tools.geo import qdrdist
+from bluesky.tools.geo import kwikqdrdist
 
-from bluesky_sandbox.sim.geometry.conflict import cd_hpz_m as _cd_hpz_m
-from bluesky_sandbox.sim.geometry.conflict import cd_lookahead_s as _cd_lookahead_s
-from bluesky_sandbox.sim.geometry.conflict import cd_rpz_m as _cd_rpz_m
+from bluesky_sandbox.sim.geometry.conflict import ConflictView
 
-from .._common import _M_TO_FT, _MS_TO_FTMIN, _MS_TO_KTS, _traf_array
-from .._pairs import (
-    _BroadcastPairs,
-    _cd_pair_values,
-    _fix_projection,
-    _pair_horizontal_tcpa_s,
-    _pair_qdr_dist,
-    _pair_relative_motion,
-    _per_own,
-    _track_frame,
-    _track_frame_at_cpa,
-)
-from .._reference import (
-    one_confpair_value,
-    one_pair_fix_projection,
-    one_pair_motion,
-    one_pair_track_frame,
-)
+from .._pairs import _BroadcastPairs, _fix_projection, _track_frame
+from .._reference import one_pair_fix_projection, one_pair_motion, one_pair_track_frame
 from ..base import ObsMeta, ObsQuantity, PairObsField, Unit
+
+
+def _future_tcpa_h(along, cross, v_along, v_cross):
+    """Time to the horizontal CPA from now on, in hours (nm over kts): a
+    passed one reads now."""
+    v2 = np.maximum(v_along * v_along + v_cross * v_cross, 1e-9)
+    return np.maximum(-(along * v_along + cross * v_cross) / v2, 0.0)
+
+
+def _one_tcpa_s(along, cross, v_along, v_cross):
+    v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
+    return max(-(along * v_along + cross * v_cross) / v2, 0.0)
 
 
 @dataclass(frozen=True)
@@ -49,98 +46,14 @@ class DistToOwnNm(_BroadcastPairs, PairObsField):
     high: Annotated[float, "distance nautical miles"] = 200.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        _qdr, dist = _pair_qdr_dist(own, other)
-        return dist
+        return ConflictView(own, other).horiz_dist_now_nm
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
-        other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
-        return float(qdrdist(*own, *other)[1])
+        east, north, _ve, _vn = one_pair_motion(own_idx, other_idx)
+        return math.hypot(east, north) / nm
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
-
-
-@dataclass(frozen=True)
-class TcpaS(_BroadcastPairs, PairObsField):
-    """BlueSky ASAS time to closest point of approach, in seconds.
-
-    ASAS only stores this value for detected conflict pairs. Non-conflict
-    intruder rows return the field's high bound - the CD lookahead horizon, the
-    largest time-to-CPA a detected conflict could carry.
-
-    Bounds are dynamic: unless explicit ``low``/``high`` are given, they follow
-    BlueSky's CD lookahead (:func:`_cd_lookahead_s`, read from
-    ``asas_dtlookahead``) as ``(-lookahead, +lookahead)``. Detected conflicts
-    fall in that range (``tcpa`` goes slightly negative just past CPA).
-    """
-
-    meta = ObsMeta(
-        "tcpa_s", Unit.S, ObsQuantity.TIME, is_pair=True, dynamic_bounds=True
-    )
-    low: Annotated[
-        float | None, "time seconds lower bound; None = -CD lookahead at runtime"
-    ] = None
-    high: Annotated[
-        float | None, "time seconds upper bound; None = +CD lookahead at runtime"
-    ] = None
-
-    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        # BlueSky ConflictDetection caches ``tcpa`` (one entry per ``confpairs``
-        # row) each sim step - read it directly. Non-conflict intruders take the
-        # high bound (the CD lookahead horizon), so the sentinel tracks config.
-        fill = _per_own(own, lambda o: self.bounds(o)[1])
-        return _cd_pair_values("tcpa", own, other, fill)
-
-    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        value = one_confpair_value("tcpa", own_idx, other_idx)
-        return self.bounds(own_idx)[1] if value is None else value
-
-    def bounds(self, own_idx: int) -> tuple[float, float]:
-        def resolve() -> tuple[float, float]:
-            look = _cd_lookahead_s()
-            return -look, look
-
-        return self._dynamic_or_configured_bounds(resolve)
-
-
-@dataclass(frozen=True)
-class TlosS(_BroadcastPairs, PairObsField):
-    """BlueSky ASAS predicted time to loss of separation (PZ entry), in seconds.
-
-    Reads the conflict detector's cached ``tLOS`` (one entry per ``confpairs``
-    row) each sim step - the time until the intruder is predicted to enter the
-    protected zone. ASAS only stores this for detected conflict pairs, so
-    non-conflict intruder rows take the high bound (the CD lookahead horizon).
-
-    Bounds are dynamic: unless explicit ``low``/``high`` are given they follow
-    BlueSky's CD lookahead (:func:`_cd_lookahead_s`, from ``asas_dtlookahead`` /
-    ``config.lookahead_s``) as ``(0, lookahead)`` - the horizon within which a
-    conflict is flagged. Unlike ``tcpa`` this is non-negative (time *to* PZ
-    entry), so it is a cleaner imminence signal than time-to-CPA.
-    """
-
-    meta = ObsMeta(
-        "tlos_s", Unit.S, ObsQuantity.TIME, is_pair=True, dynamic_bounds=True
-    )
-    low: Annotated[float | None, "time seconds lower bound; None = 0 at runtime"] = None
-    high: Annotated[
-        float | None, "time seconds upper bound; None = CD lookahead at runtime"
-    ] = None
-
-    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        # BlueSky ConflictDetection caches ``tLOS`` (one entry per ``confpairs``
-        # row) each sim step - read it directly. Non-conflict intruders take the
-        # high bound (the CD lookahead horizon).
-        fill = _per_own(own, lambda o: self.bounds(o)[1])
-        return _cd_pair_values("tLOS", own, other, fill)
-
-    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        value = one_confpair_value("tLOS", own_idx, other_idx)
-        return self.bounds(own_idx)[1] if value is None else value
-
-    def bounds(self, own_idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_lookahead_s()))
 
 
 @dataclass(frozen=True)
@@ -155,12 +68,9 @@ class ClosingRateKts(_BroadcastPairs, PairObsField):
     high: Annotated[float, "speed knots"] = 1000.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
-            own, other
-        )
-        dist_m = np.maximum(np.hypot(rel_east_m, rel_north_m), 1e-6)
-        range_rate_ms = (rel_east_m * rel_east_ms + rel_north_m * rel_north_ms) / dist_m
-        return -range_rate_ms * _MS_TO_KTS
+        along, cross, v_along, v_cross = _track_frame(own, other)
+        dist = np.maximum(np.hypot(along, cross), 1e-9)
+        return -(along * v_along + cross * v_cross) / dist
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
@@ -188,12 +98,13 @@ class BearingRateDegPerSec(_BroadcastPairs, PairObsField):
     high: Annotated[float, "degrees per second"] = 10.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
-            own, other
-        )
-        dist2_m = np.maximum(rel_east_m * rel_east_m + rel_north_m * rel_north_m, 1e-6)
-        rate_rad_s = (rel_north_m * rel_east_ms - rel_east_m * rel_north_ms) / dist2_m
-        return np.degrees(rate_rad_s)
+        # The track frame mirrors east/north, so the clockwise rate reads
+        # along x v_cross - cross x v_along there. In SI: BlueSky's knot is
+        # 0.514444 m/s, not exactly a nautical mile per hour.
+        along, cross, v_along, v_cross = _track_frame(own, other)
+        along, cross, v_along, v_cross = along * nm, cross * nm, v_along * kts, v_cross * kts
+        dist2 = np.maximum(along * along + cross * cross, 1e-6)
+        return np.degrees((along * v_cross - cross * v_along) / dist2)
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
@@ -220,8 +131,7 @@ class RelPosAlongTrackNm(_BroadcastPairs, PairObsField):
     high: Annotated[float, "along-track nm"] = 200.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        along, _c, _va, _vc = _track_frame(own, other)
-        return along / nm
+        return _track_frame(own, other)[0]
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[0] / nm
@@ -244,8 +154,7 @@ class RelPosCrossTrackNm(_BroadcastPairs, PairObsField):
     high: Annotated[float, "cross-track nm"] = 200.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        _a, cross, _va, _vc = _track_frame(own, other)
-        return cross / nm
+        return _track_frame(own, other)[1]
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[1] / nm
@@ -269,8 +178,7 @@ class RelVelAlongTrackKts(_BroadcastPairs, PairObsField):
     high: Annotated[float, "along-track kts"] = 1000.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        _a, _c, v_along, _vc = _track_frame(own, other)
-        return v_along * _MS_TO_KTS
+        return _track_frame(own, other)[2]
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[2] / kts
@@ -291,8 +199,7 @@ class RelVelCrossTrackKts(_BroadcastPairs, PairObsField):
     high: Annotated[float, "cross-track kts"] = 1000.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        _a, _c, _va, v_cross = _track_frame(own, other)
-        return v_cross * _MS_TO_KTS
+        return _track_frame(own, other)[3]
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return one_pair_track_frame(own_idx, other_idx)[3] / kts
@@ -307,6 +214,7 @@ class RelPosAtCpaAlongTrackNm(_BroadcastPairs, PairObsField):
 
     Cartesian replacement for the scalar horizontal-miss `dcpa`: together with the
     cross component it preserves the miss magnitude AND adds the pass direction.
+    A CPA already passed reads the position now.
     """
 
     meta = ObsMeta(
@@ -316,14 +224,12 @@ class RelPosAtCpaAlongTrackNm(_BroadcastPairs, PairObsField):
     high: Annotated[float, "along-track nm"] = 200.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        along, _cross = _track_frame_at_cpa(own, other)
-        return along / nm
+        along, cross, v_along, v_cross = _track_frame(own, other)
+        return along + v_along * _future_tcpa_h(along, cross, v_along, v_cross)
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         along, cross, v_along, v_cross = one_pair_track_frame(own_idx, other_idx)
-        v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
-        tcpa = max(-(along * v_along + cross * v_cross) / v2, 0.0)  # future only
-        return (along + v_along * tcpa) / nm
+        return (along + v_along * _one_tcpa_s(along, cross, v_along, v_cross)) / nm
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -344,14 +250,12 @@ class RelPosAtCpaCrossTrackNm(_BroadcastPairs, PairObsField):
     high: Annotated[float, "cross-track nm"] = 200.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        _along, cross = _track_frame_at_cpa(own, other)
-        return cross / nm
+        along, cross, v_along, v_cross = _track_frame(own, other)
+        return cross + v_cross * _future_tcpa_h(along, cross, v_along, v_cross)
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         along, cross, v_along, v_cross = one_pair_track_frame(own_idx, other_idx)
-        v2 = max(v_along * v_along + v_cross * v_cross, 1e-9)
-        tcpa = max(-(along * v_along + cross * v_cross) / v2, 0.0)  # future only
-        return (cross + v_cross * tcpa) / nm
+        return (cross + v_cross * _one_tcpa_s(along, cross, v_along, v_cross)) / nm
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -371,107 +275,13 @@ class RelVsFtMin(_BroadcastPairs, PairObsField):
     high: Annotated[float, "vertical speed feet per minute"] = 6000.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        vs = _traf_array("vs")
-        return (vs[other] - vs[own]) * _MS_TO_FTMIN
+        return ConflictView(own, other).rel_vs_ft_min
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
         return (float(bs.traf.vs[other_idx]) - float(bs.traf.vs[own_idx])) * 60.0 / ft
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
-
-
-@dataclass(frozen=True)
-class HorizontalDistAtCpaNm(_BroadcastPairs, PairObsField):
-    """BlueSky ASAS horizontal distance at closest point of approach, in NM.
-
-    Reads the conflict detector's cached ``dcpa`` (meters, one entry per
-    ``confpairs`` row) and converts to nautical miles. ASAS only stores this for
-    detected conflict pairs - and a conflict has ``dcpa < rpz`` - so non-conflict
-    intruder rows take the high bound (the PZ radius): the smallest miss distance
-    that is not a conflict.
-
-    Bounds are dynamic: unless explicit ``low``/``high`` are given they follow
-    BlueSky's horizontal protected-zone radius (:func:`_cd_rpz_m`, from
-    ``config.pz_radius_nm`` / ``asas_pzr``) as ``(0, rpz)``. That is the true
-    support of the cached ``dcpa``, so the normalized value grades the actual
-    miss distance instead of collapsing every conflict toward 0.
-    """
-
-    meta = ObsMeta(
-        "horizontal_dist_at_cpa_nm",
-        Unit.NM,
-        ObsQuantity.DISTANCE,
-        is_pair=True,
-        dynamic_bounds=True,
-    )
-    low: Annotated[float | None, "distance nm lower bound; None = 0 at runtime"] = None
-    high: Annotated[
-        float | None, "distance nm upper bound; None = CD PZ radius at runtime"
-    ] = None
-
-    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        # BlueSky ConflictDetection caches ``dcpa`` (meters, one entry per
-        # ``confpairs`` row) each sim step - read it directly and convert to NM.
-        # Non-conflict intruders take the high bound (the PZ radius).
-        fill = _per_own(own, lambda o: self.bounds(o)[1])
-        return _cd_pair_values("dcpa", own, other, fill, divisor=nm)
-
-    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        value = one_confpair_value("dcpa", own_idx, other_idx)
-        return self.bounds(own_idx)[1] if value is None else value / nm
-
-    def bounds(self, own_idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_rpz_m() / nm))
-
-
-@dataclass(frozen=True)
-class VerticalSepAtCpaFt(_BroadcastPairs, PairObsField):
-    """Predicted absolute vertical separation at horizontal CPA, in feet.
-
-    The horizontal CPA time is computed from current traffic vectors, for every
-    intruder (not only detected conflicts). Negative CPA times are clipped to
-    zero, so opening pairs report current vertical separation instead of
-    extrapolating into the past.
-
-    Bounds are dynamic: unless explicit ``low``/``high`` are given they follow
-    BlueSky's vertical protected-zone height (:func:`_cd_hpz_m`, from
-    ``config.pz_height_ft`` / ``asas_pzh``) as ``(0, hpz)`` - the minimum
-    vertical separation. Because this reports a value for every intruder, that is
-    a *normalization* choice, not the data range: intruders predicted to clear
-    the vertical PZ saturate at the safe edge, focusing the signal on the danger
-    band. Pass explicit bounds for a wider scale.
-    """
-
-    meta = ObsMeta(
-        "vertical_sep_at_cpa_ft",
-        Unit.FT,
-        ObsQuantity.ALTITUDE,
-        is_pair=True,
-        dynamic_bounds=True,
-    )
-    low: Annotated[float | None, "altitude ft lower bound; None = 0 at runtime"] = None
-    high: Annotated[
-        float | None, "altitude ft upper bound; None = CD PZ height at runtime"
-    ] = None
-
-    def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        tcpa_s = np.maximum(_pair_horizontal_tcpa_s(own, other), 0.0)
-        alt, vs = _traf_array("alt"), _traf_array("vs")
-        rel_alt_m = alt[other] - alt[own]
-        rel_vs_ms = vs[other] - vs[own]
-        return np.abs(rel_alt_m + rel_vs_ms * tcpa_s) * _M_TO_FT
-
-    def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        east, north, v_east, v_north = one_pair_motion(own_idx, other_idx)
-        v2 = max(v_east * v_east + v_north * v_north, 1e-6)
-        tcpa = max(-(east * v_east + north * v_north) / v2, 0.0)
-        rel_alt = float(bs.traf.alt[other_idx]) - float(bs.traf.alt[own_idx])
-        rel_vs = float(bs.traf.vs[other_idx]) - float(bs.traf.vs[own_idx])
-        return abs(rel_alt + rel_vs * tcpa) / ft
-
-    def bounds(self, own_idx: int) -> tuple[float, float]:
-        return self._dynamic_or_configured_bounds(lambda: (0.0, _cd_hpz_m() * _M_TO_FT))
 
 
 @dataclass(frozen=True)
@@ -612,7 +422,7 @@ class BrgFromOwnDeg(_BroadcastPairs, PairObsField):
     """Ownship-relative intruder bearing in degrees.
 
     The true bearing from ownship to the intruder, signed in ``[-180, 180]``
-    (0 = north, +90 = east, -90 = west) as returned by ``qdrdist``.
+    (0 = north, +90 = east, -90 = west).
     """
 
     meta = ObsMeta(
@@ -626,13 +436,11 @@ class BrgFromOwnDeg(_BroadcastPairs, PairObsField):
     high: Annotated[float, "bearing degrees"] = 180.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        qdr, _dist = _pair_qdr_dist(own, other)
-        return qdr
+        view = ConflictView(own, other)
+        return np.degrees(np.arctan2(view.rel_east_now_nm, view.rel_north_now_nm))
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
-        other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
-        return float(qdrdist(*own, *other)[0])
+        return _one_bearing_deg(own_idx, other_idx)
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
@@ -662,14 +470,22 @@ class BrgFromOwnRelTrkDeg(_BroadcastPairs, PairObsField):
     high: Annotated[float, "bearing degrees"] = 180.0
 
     def _pairs(self, own: np.ndarray, other: np.ndarray) -> np.ndarray:
-        qdr, _dist = _pair_qdr_dist(own, other)
-        return (qdr - _traf_array("trk")[own] + 540.0) % 360.0 - 180.0
+        along, cross, _va, _vc = _track_frame(own, other)
+        return np.degrees(np.arctan2(cross, along))
 
     def expected_pair(self, own_idx: int, other_idx: int) -> Any:
-        own = (float(bs.traf.lat[own_idx]), float(bs.traf.lon[own_idx]))
-        other = (float(bs.traf.lat[other_idx]), float(bs.traf.lon[other_idx]))
-        relative = float(qdrdist(*own, *other)[0]) - float(bs.traf.trk[own_idx])
+        relative = _one_bearing_deg(own_idx, other_idx) - float(bs.traf.trk[own_idx])
         return (relative + 180.0) % 360.0 - 180.0
 
     def bounds(self, own_idx: int) -> tuple[float, float]:
         return self._configured_bounds()
+
+
+def _one_bearing_deg(own_idx: int, other_idx: int) -> float:
+    qdr, _dist = kwikqdrdist(
+        float(bs.traf.lat[own_idx]),
+        float(bs.traf.lon[own_idx]),
+        float(bs.traf.lat[other_idx]),
+        float(bs.traf.lon[other_idx]),
+    )
+    return (float(qdr) + 180.0) % 360.0 - 180.0

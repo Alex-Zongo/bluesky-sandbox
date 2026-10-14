@@ -15,9 +15,9 @@ import numpy as np
 from bluesky.tools.aero import nm
 from bluesky.tools.geo import qdrdist
 
-from bluesky_sandbox.sim.geometry.conflict import conflict_geometry
+from bluesky_sandbox.sim.geometry.conflict import ConflictView
 
-from ._common import _M_TO_FT, _indices_array, _traf_array, on_reset
+from ._common import _M_TO_FT, _indices_array, _traf_array
 from ._route import _active_route_waypoint
 from .base import ObsField
 
@@ -63,148 +63,21 @@ def _per_aircraft(field: ObsField, idx: np.ndarray) -> np.ndarray:
     return flat.reshape(idx.shape + flat.shape[1:])
 
 
-# BlueSky's detector keeps one entry per conflict pair (``confpairs``) in each
-# of its arrays. Laid out as an ``n x n`` matrix once per sim time, so every
-# ownship reads its row instead of rescanning the pair list.
-_CD_PAIR_CACHE: dict[str, tuple[tuple, tuple[np.ndarray, np.ndarray]]] = {}
-on_reset(lambda _seed: _CD_PAIR_CACHE.clear())
-
-
-def _cd_pair_matrix(attr: str) -> tuple[np.ndarray, np.ndarray] | None:
-    """``(values, present)`` of CD array ``attr`` by ``[own, other]`` index."""
-    cd = getattr(bs.traf, "cd", None)
-    if cd is None or len(cd.confpairs) == 0:
-        return None
-    ids = bs.traf.id
-    key = (float(bs.sim.simt), tuple(ids), id(cd.confpairs), len(cd.confpairs))
-    cached = _CD_PAIR_CACHE.get(attr)
-    if cached is not None and cached[0] == key:
-        return cached[1]
-    n = len(ids)
-    values = np.zeros((n, n), dtype=np.float64)
-    present = np.zeros((n, n), dtype=bool)
-    row = {acid: i for i, acid in enumerate(ids)}
-    source = np.asarray(getattr(cd, attr), dtype=np.float64)
-    for k, (left, right) in enumerate(cd.confpairs):
-        i, j = row.get(left), row.get(right)
-        if i is not None and j is not None and k < source.size:
-            values[i, j] = source[k]
-            present[i, j] = True
-    _CD_PAIR_CACHE[attr] = (key, (values, present))
-    return values, present
-
-
-def _cd_pair_values(
-    attr: str, own: np.ndarray, other: np.ndarray, fill, divisor: float = 1.0
-) -> np.ndarray:
-    """CD array ``attr`` for each (own, other) pair in conflict, else ``fill``."""
-    shape = np.broadcast_shapes(own.shape, other.shape)
-    fill = np.broadcast_to(np.asarray(fill, dtype=np.float64), shape)
-    matrix = _cd_pair_matrix(attr)
-    if matrix is None:
-        return fill.copy()
-    values, present = matrix
-    return np.where(present[own, other], values[own, other] / divisor, fill)
-
-
-class _GeomPairs:
-    """The per-step conflict geometry, sliced by (own, other) index arrays.
-
-    Stands in for :class:`ConflictView` wherever only its raw per-pair arrays
-    are read - the windowed conflict functions are elementwise - but over any
-    broadcastable index shape, so one ownship's row and every ownship's matrix
-    come from the same code.
-    """
-
-    __slots__ = ("_geom", "_other", "_own")
-
-    def __init__(self, own: np.ndarray, other: np.ndarray) -> None:
-        self._geom = conflict_geometry()
-        self._own = own
-        self._other = other
-
-    def __getattr__(self, name: str) -> np.ndarray:
-        return getattr(self._geom, name)[self._own, self._other]
-
-
-def _pair_qdr_dist(own_idx: Any, other_indices: Any) -> tuple[np.ndarray, np.ndarray]:
-    own = _indices_array(own_idx)
-    other = _indices_array(other_indices)
-    lat, lon = _traf_array("lat"), _traf_array("lon")
-    qdr, dist = qdrdist(lat[own], lon[own], lat[other], lon[other])
-    shape = np.broadcast_shapes(own.shape, other.shape)
-    return (
-        np.broadcast_to(np.asarray(qdr, dtype=np.float64), shape),
-        np.broadcast_to(np.asarray(dist, dtype=np.float64), shape),
-    )
-
-
-def _pair_relative_motion(
-    own_idx: Any,
-    other_indices: Any,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return relative position and velocity as east/north arrays in SI units."""
-    qdr, dist_nm = _pair_qdr_dist(own_idx, other_indices)
-    own = _indices_array(own_idx)
-    other = _indices_array(other_indices)
-    qdrrad = np.radians(qdr)
-    dist_m = dist_nm * nm
-    rel_east_m = dist_m * np.sin(qdrrad)
-    rel_north_m = dist_m * np.cos(qdrrad)
-
-    track = np.radians(_traf_array("trk"))
-    gs = _traf_array("gs")
-    own_east_ms = gs[own] * np.sin(track[own])
-    own_north_ms = gs[own] * np.cos(track[own])
-    other_east_ms = gs[other] * np.sin(track[other])
-    other_north_ms = gs[other] * np.cos(track[other])
-
-    return (
-        rel_east_m,
-        rel_north_m,
-        other_east_ms - own_east_ms,
-        other_north_ms - own_north_ms,
-    )
-
-
-def _pair_horizontal_tcpa_s(own_idx: Any, other_indices: Any) -> np.ndarray:
-    rel_east_m, rel_north_m, rel_east_ms, rel_north_ms = _pair_relative_motion(
-        own_idx,
-        other_indices,
-    )
-    rel_speed2 = np.maximum(
-        rel_east_ms * rel_east_ms + rel_north_ms * rel_north_ms,
-        1e-6,
-    )
-    return -(rel_east_m * rel_east_ms + rel_north_m * rel_north_ms) / rel_speed2
-
-
-def _track_frame(own_idx: Any, other_indices: Any):
-    """Intruder relative position (m) and velocity (m/s) in the OWNSHIP TRACK
-    frame: (along, cross) where along = down the own velocity vector (ahead +),
-    cross = to the right of it. Rotation-invariant (rotates with own track), so
-    the encounter reads the same at any absolute heading."""
-    rel_e, rel_n, ve, vn = _pair_relative_motion(own_idx, other_indices)
-    trk = np.radians(_traf_array("trk"))[_indices_array(own_idx)]
+def _track_frame(own: np.ndarray, other: np.ndarray):
+    """``(along, cross, v_along, v_cross)``: the intruder's position (nm) and
+    velocity (kts) relative to the ownship, in its TRACK frame - along = ahead,
+    cross = to the right - from the shared pair geometry. Rotates with the own
+    track, so an encounter reads the same at any heading."""
+    view = ConflictView(own, other)
+    trk = np.radians(_traf_array("trk"))[own]
     s, c = np.sin(trk), np.cos(trk)
-    along = rel_e * s + rel_n * c  # projection on own track (compass sin/cos)
-    cross = rel_e * c - rel_n * s  # 90 deg clockwise (to the right)
-    v_along = ve * s + vn * c
-    v_cross = ve * c - vn * s
+
+    def rotate(east, north):
+        return east * s + north * c, east * c - north * s
+
+    along, cross = rotate(view.rel_east_now_nm, view.rel_north_now_nm)
+    v_along, v_cross = rotate(view.rel_vel_east_kts, view.rel_vel_north_kts)
     return along, cross, v_along, v_cross
-
-
-def _track_frame_at_cpa(own_idx: Any, other_indices: Any):
-    """Track-frame relative position AT the predicted (constant-velocity) CPA:
-    (along, cross) in meters = now-position + relative-velocity * tcpa, with tcpa
-    clamped to >=0 (already-passed encounters read at 'now'). Its magnitude equals
-    the horizontal miss dcpa; its cross-sign says which side the intruder passes."""
-    along, cross, v_along, v_cross = _track_frame(own_idx, other_indices)
-    # tcpa from the SAME track-frame primitives (it is rotation-invariant), so
-    # position and velocity share one projection and |result| == dcpa exactly.
-    v2 = np.maximum(v_along * v_along + v_cross * v_cross, 1e-9)
-    tcpa = np.maximum(-(along * v_along + cross * v_cross) / v2, 0.0)  # future CPA only
-    return along + v_along * tcpa, cross + v_cross * tcpa
 
 
 def _fix_projection(

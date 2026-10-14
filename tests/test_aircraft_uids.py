@@ -241,15 +241,16 @@ def test_without_a_runtime_memory_falls_back_to_callsigns(monkeypatch):
 
 
 def test_an_env_reset_clears_every_field_store(env):
-    from bluesky_sandbox.interface.fields import _lag, _pairs, _state  # noqa: PLC0415
+    from bluesky_sandbox.interface.fields import _lag, _state  # noqa: PLC0415
+    from bluesky_sandbox.sim.geometry import conflict  # noqa: PLC0415
 
     _cre("AAA001")
     _state._TIME_IN_ENV.write(_index("AAA001"), 5.0)
     _lag._LAG_HISTORY[("obs", "stale")] = object()
-    _pairs._CD_PAIR_CACHE["tcpa"] = ((), (None, None))
+    conflict._CACHE["geometry"] = ((), None)
     _state._COMM_NOISE_RNG.normal(size=3)  # advance the stream
     env.reset(seed=4)
-    assert not _lag._LAG_HISTORY and not _pairs._CD_PAIR_CACHE
+    assert not _lag._LAG_HISTORY and not conflict._CACHE
     _cre("AAA001")
     assert _state._TIME_IN_ENV.read_one(_index("AAA001")) == 0.0
     fresh = np.random.default_rng(4).normal(size=3)

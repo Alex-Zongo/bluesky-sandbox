@@ -373,16 +373,12 @@ class AgentStepContext:
 
     @property
     def conflicts(self) -> ConflictView:
-        """The ownship's shared per-step conflict geometry view.
-
-        A :class:`~bluesky_sandbox.sim.geometry.conflict.ConflictView` over the other
-        live aircraft, backed by one cached pairwise-CPA computation shared with
-        the cost and keep mask. Exposes only raw kinematic primitives (derived
-        breach/severity is the consumer's job): per-intruder ``.tcpa_s`` /
-        ``.dcpa_nm`` / ``.vsep_at_cpa_ft`` / ``.horiz_dist_now_nm`` /
-        ``.dalt_now_ft``, reductions ``.min_tcpa_s`` / ``.min_dcpa_nm`` /
-        ``.min_horiz_dist_now_nm``, the ``.within(horizon_s=...)`` filter, and
-        iteration over per-intruder records.
+        """The ownship's row of the shared pair geometry: a
+        :class:`~bluesky_sandbox.sim.geometry.conflict.ConflictView` over every
+        other live aircraft, in the observation's intruder order -
+        ``.tcpa_s``, ``.dcpa_nm``, ``.horiz_dist_now_nm``, ``.rel_alt_now_ft``
+        and the rest, one value per intruder. BlueSky's conflict detection
+        itself is :func:`~bluesky_sandbox.sim.geometry.conflict.detection`.
         """
 
         return ConflictView(self.acidx)

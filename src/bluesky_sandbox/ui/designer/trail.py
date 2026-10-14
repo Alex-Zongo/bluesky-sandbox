@@ -1,7 +1,7 @@
 """What a field computes with: the functions its value is built from.
 
 A field's class source is often a single call - ``DistToOwnNm._pairs`` is one
-line into ``_pair_qdr_dist`` - so the designer shows, beneath it, the trail of
+line into ``ConflictView`` - so the designer shows, beneath it, the trail of
 calls that produce the value: every function and class of this package the
 field's value methods call, recursively, in call order, each with its source.
 BlueSky functions end the trail as named leaves.

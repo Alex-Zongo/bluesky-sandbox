@@ -17,35 +17,15 @@ import math
 
 import bluesky as bs
 from bluesky.tools.aero import ft, nm
-from bluesky.tools.geo import qdrdist
+from bluesky.tools.geo import kwikqdrdist, qdrdist
 
 from ._route import _active_route_waypoint
 
 __all__ = [
-    "one_confpair_value",
     "one_pair_fix_projection",
     "one_pair_motion",
     "one_pair_track_frame",
 ]
-
-
-def one_confpair_value(attr: str, own_idx: int, other_idx: int) -> float | None:
-    """BlueSky's conflict-detection ``attr`` (``tcpa``, ``tLOS``, ``dcpa``) for
-    this pair, or ``None`` when the detector did not flag it.
-
-    The detector keeps one entry per flagged ordered pair in ``confpairs``;
-    a later entry for the same pair wins, as it would when writing them out.
-    """
-    cd = getattr(bs.traf, "cd", None)
-    if cd is None:
-        return None
-    pair = (bs.traf.id[own_idx], bs.traf.id[other_idx])
-    values = getattr(cd, attr)
-    found = None
-    for k, confpair in enumerate(cd.confpairs):
-        if tuple(confpair) == pair and k < len(values):
-            found = float(values[k])
-    return found
 
 
 def _velocity(idx: int) -> tuple[float, float]:
@@ -56,8 +36,9 @@ def _velocity(idx: int) -> tuple[float, float]:
 
 def one_pair_motion(own_idx: int, other_idx: int) -> tuple[float, float, float, float]:
     """The intruder relative to the ownship, east/north:
-    ``(east_m, north_m, east_ms, north_ms)``."""
-    qdr, dist_nm = qdrdist(
+    ``(east_m, north_m, east_ms, north_ms)``, positions on BlueSky's flat-earth
+    projection (``kwikqdrdist``), as its conflict detection measures them."""
+    qdr, dist_nm = kwikqdrdist(
         float(bs.traf.lat[own_idx]),
         float(bs.traf.lon[own_idx]),
         float(bs.traf.lat[other_idx]),

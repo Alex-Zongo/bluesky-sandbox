@@ -76,7 +76,7 @@ def mixed():
         ],
         intruder_obs_fields=[obs.DistToOwnNm(), obs.AltFt()],
         critic_obs_fields=[obs.CasKts()],
-        critic_intruder_obs_fields=[obs.AltFt(), obs.TcpaS()],
+        critic_intruder_obs_fields=[obs.AltFt(), obs.ConflictTcpaS()],
     )
     yield env
     env.close()
@@ -233,6 +233,6 @@ def test_the_critic_layout_appends_each_critic_part(mixed):
         "dist_to_own_nm",
         "alt_ft",
         "alt_ft#2",
-        "tcpa_s",
+        "conflict_tcpa_s",
     ]
     _assert_tiles(layout["intruders"], 4)

@@ -48,11 +48,12 @@ def test_every_entry_points_at_real_source(cls):
 @pytest.mark.parametrize(
     ("cls", "expected"),
     [
-        (observations.DistToOwnNm, ["_pairs._pair_qdr_dist", "geo.qdrdist"]),
+        (observations.DistToOwnNm, ["ConflictView", "conflict._compute", "geo.kwikqdrdist_matrix"]),
         (
             observations.ConflictTcpaS,
-            ["_ConflictGeomPairField._pairs", "_GeomPairs", "conflict._compute"],
+            ["_ConflictGeomPairField._pairs", "ConflictView", "conflict._compute"],
         ),
+        (observations.InConf, ["conflict.detection", "conflict._detect"]),
         (
             observations.IntruderFixArrivalDeltaS,
             ["_pairs._fix_projection", "_route._active_route_waypoint"],
@@ -83,8 +84,8 @@ def test_a_helper_is_listed_below_the_one_that_calls_it():
     names = [(e["name"], e["depth"]) for e in call_trail(observations.ConflictTcpaS)]
     order = [name for name, _depth in names]
     depth = dict(names)
-    assert order.index("_GeomPairs") < order.index("conflict.conflict_geometry")
-    assert depth["conflict.conflict_geometry"] > depth["_GeomPairs"]
+    assert order.index("ConflictView") < order.index("conflict.conflict_geometry")
+    assert depth["conflict.conflict_geometry"] > depth["ConflictView"]
 
 
 @pytest.mark.parametrize("cls", _built_in_fields(), ids=lambda c: c.__name__)
@@ -97,8 +98,8 @@ def test_plumbing_is_left_out(cls):
 def test_the_catalog_ships_the_trail():
     fields = {entry["name"]: entry for entry in catalog.obs_fields()}
     trail = fields["DistToOwnNm"]["profile"]["trail"]
-    assert trail[0]["name"] == "_pairs._pair_qdr_dist"
-    assert "def _pair_qdr_dist" in trail[0]["source"]
+    assert trail[0]["name"] == "ConflictView"
+    assert "class ConflictView" in trail[0]["source"]
 
 
 @pytest.mark.parametrize(

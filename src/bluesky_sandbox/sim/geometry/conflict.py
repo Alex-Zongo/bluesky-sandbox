@@ -1,56 +1,50 @@
-"""Shared per-step conflict geometry.
+"""Pairwise geometry and conflict detection, once per step.
 
-One vectorized pairwise closest-point-of-approach (CPA) computation, cached and
-self-invalidating, read by cost functions, keep masks, and hooks so that
-*costed* and *kept* describe the **same** geometry (this is what eliminates whole
-classes of mismatch bugs, e.g. a cost that sees a conflict the keep mask does
-not).
+Two things, each computed once per sim time and cached:
 
-The :class:`ConflictView` exposes only **raw kinematic primitives** - unambiguous
-facts about the linear extrapolation of each pair. Anything derived
-(protected-zone penetration, imminence, severity, a breach flag) is a *policy*
-with approximations and thresholds, so it is deliberately **not** a view field:
-consumers compute it from these primitives with their own ``rpz``/``vpz``/horizon.
-That keeps the primitives honest - every field means exactly what it says. The one
-concession is :func:`predicted_tlos_s`, a *parameterized module function* (it takes
-the caller's ``rpz``/``vpz``) rather than a view field - it exists so the
-``tinconf`` (time-to-LoS) computation has a single shared implementation instead of
-being copied into each consumer.
+* :func:`conflict_geometry` - every pair's straight-line motion: where ``j`` is
+  relative to ``i`` now, how fast, and their closest point of approach (CPA).
+  Positions come from BlueSky's ``kwikqdrdist_matrix``, the flat-earth
+  projection its conflict detection measures on, so a field built on them
+  describes the encounter the detector sees.
+* :func:`detection` - BlueSky's conflict detection itself: the configured
+  ``CDMETHOD``'s ``detect`` run on the current state, giving which pairs are in
+  conflict and in loss of separation, and when each conflict enters the zone.
+  Its rule is BlueSky's, never re-derived here.
 
-For each ordered pair ``(i, j)``, on a flat-earth ENU extrapolation (exact enough
-for a ~100 nm sector):
+Arrays are ``N x N`` in ``bs.traf`` order, ``[i, j]`` = ``j`` seen from ``i``.
+:class:`ConflictView` slices them by aircraft - an ownship's row over the
+others for hooks (``context.conflicts``), any index arrays for fields.
 
-- ``tcpa_s``             time to the *horizontal* CPA (s); negative once past it.
-- ``dcpa_nm``           horizontal separation at that horizontal CPA (nm).
-- ``vsep_at_cpa_ft``    vertical separation at that horizontal CPA (ft).
-- ``horiz_dist_now_nm`` *current* horizontal separation (nm).
-- ``dalt_now_ft``       *current* vertical separation (ft), unsigned.
-- ``rel_hspd_kts``      horizontal relative speed (kts), ``|v_j - v_i|`` (>=0).
-- ``rel_alt_now_ft``    *current* **signed** relative altitude (ft), ``alt_j - alt_i``.
-- ``rel_vs_ft_min``     **signed** relative vertical speed (ft/min), ``vs_j - vs_i``.
+Geometry, for each pair:
 
-All arrays are ``N x N`` in ``bs.traf`` order (diagonal 0). Unlike BlueSky's own
-``confpairs`` this is not capped at ``DTLOOK`` and does not depend on the CD's
-update timing - every pair is computed, and consumers threshold as they see fit.
-
-Per-agent access is through :class:`ConflictView` (``context.conflicts``), which
-exposes the ownship's row over the *other* aircraft with reductions and filters.
+- ``rel_east_now_nm`` / ``rel_north_now_nm``  signed position of ``j`` (nm).
+- ``horiz_dist_now_nm``                       horizontal distance (nm).
+- ``rel_vel_east_kts`` / ``rel_vel_north_kts`` velocity of ``j`` relative to ``i`` (kts).
+- ``rel_hspd_kts``                            horizontal relative speed (kts).
+- ``tcpa_s``                                  time to the horizontal CPA (s), negative past it.
+- ``dcpa_nm``                                 horizontal distance at that CPA (nm).
+- ``rel_alt_now_ft`` / ``dalt_now_ft``         altitude of ``j`` above ``i`` (ft), signed / unsigned.
+- ``rel_vs_ft_min``                           vertical speed of ``j`` relative to ``i`` (ft/min).
+- ``vsep_at_cpa_ft``                          vertical separation at the horizontal CPA (ft).
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft as _FT
 from bluesky.tools.aero import kts as _KTS
 from bluesky.tools.aero import nm as _NM
+from bluesky.tools.geo import kwikqdrdist_matrix
 
 _M_TO_FT = 1.0 / _FT
 _MS_TO_KTS = 1.0 / _KTS
 _MS_TO_FTMIN = _M_TO_FT * 60.0
-_RE = 6371000.0  # earth radius, meters (matches BlueSky ``kwikqdrdist``)
 
-_CACHE: dict = {"geom": None, "key": None}
+_CACHE: dict = {}
 
 
 # ---- BlueSky CD settings ------------------------------------------ #
@@ -126,328 +120,179 @@ def bluesky_asas_dt_s() -> float | None:
     value = getattr(bs.settings, "asas_dt", None)
     return None if value is None else float(value)
 
-class ConflictGeometry:
-    """Immutable per-step pairwise CPA arrays (``N x N``, ``bs.traf`` order)."""
 
-    __slots__ = (
-        "dalt_now_ft",
-        "dcpa_nm",
-        "horiz_dist_now_nm",
-        "n",
-        "rel_alt_now_ft",
-        "rel_hspd_kts",
-        "rel_vs_ft_min",
-        "tcpa_s",
-        "vsep_at_cpa_ft",
-    )
-
-    def __init__(self, **arrays) -> None:
-        for name, value in arrays.items():
-            setattr(self, name, value)
+def _step_key() -> tuple:
+    return (getattr(getattr(bs, "sim", None), "simt", None), tuple(bs.traf.id))
 
 
-def _compute() -> ConflictGeometry:
-    n = len(bs.traf.id)
-    if n < 2:
-        z = np.zeros((n, n), dtype=np.float64)
-        return ConflictGeometry(
-            tcpa_s=z.copy(),
-            dcpa_nm=z.copy(),
-            vsep_at_cpa_ft=z.copy(),
-            horiz_dist_now_nm=z.copy(),
-            dalt_now_ft=z.copy(),
-            rel_hspd_kts=z.copy(),
-            rel_alt_now_ft=z.copy(),
-            rel_vs_ft_min=z.copy(),
-            n=n,
-        )
-
-    lat = np.asarray(bs.traf.lat, dtype=np.float64)
-    lon = np.asarray(bs.traf.lon, dtype=np.float64)
-    alt = np.asarray(bs.traf.alt, dtype=np.float64)
-    vs = np.asarray(bs.traf.vs, dtype=np.float64)
-
-    # Pairwise flat-earth (equirectangular) offset of j relative to i, matching
-    # BlueSky's ``kwikqdrdist`` projection but vectorized over all pairs: the
-    # compiled geo kernels do not broadcast 2-D inputs (they return a scalar), so
-    # compute the projection directly with the same earth radius and mean-lat
-    # cosine factor.
-    dlat = np.radians(lat[None, :] - lat[:, None])  # [i, j]
-    dlon = np.radians(lon[None, :] - lon[:, None])
-    cavelat = np.cos(np.radians(lat[:, None] + lat[None, :]) * 0.5)
-    dx = _RE * dlon * cavelat  # position of j relative to i (east), meters
-    dy = _RE * dlat  # (north), meters
-    dist = np.sqrt(dx * dx + dy * dy)  # meters, [i, j]
-    horiz_dist_now_nm = dist / _NM
-
-    trkrad = np.radians(np.asarray(bs.traf.trk, dtype=np.float64))
-    gs = np.asarray(bs.traf.gs, dtype=np.float64)
-    u = gs * np.sin(trkrad)
-    v = gs * np.cos(trkrad)
-    du = u[None, :] - u[:, None]  # relative velocity of j w.r.t. i (east)
-    dv = v[None, :] - v[:, None]  # (north)
-    dv2 = np.maximum(du * du + dv * dv, 1e-6)
-
-    tcpa = -(du * dx + dv * dy) / dv2
-    tcpa_pos = np.maximum(tcpa, 0.0)
-    dcpa_nm = np.sqrt(np.abs(dist * dist - tcpa * tcpa * dv2)) / _NM
-    rel_hspd_kts = np.sqrt(dv2) * _MS_TO_KTS  # horizontal relative speed (matches BlueSky vrel)
-    rel_alt_now = alt[None, :] - alt[:, None]  # signed (j - i), meters
-    rel_vs = vs[None, :] - vs[:, None]  # signed (j - i), m/s
-    vsep_at_cpa_ft = np.abs(rel_alt_now + rel_vs * tcpa_pos) * _M_TO_FT
-    dalt_now_ft = np.abs(rel_alt_now) * _M_TO_FT
-    rel_alt_now_ft = rel_alt_now * _M_TO_FT
-    rel_vs_ft_min = rel_vs * _MS_TO_FTMIN
-
-    for m in (
-        tcpa,
-        dcpa_nm,
-        vsep_at_cpa_ft,
-        horiz_dist_now_nm,
-        dalt_now_ft,
-        rel_hspd_kts,
-        rel_alt_now_ft,
-        rel_vs_ft_min,
-    ):
-        np.fill_diagonal(m, 0.0)
-
-    return ConflictGeometry(
-        tcpa_s=tcpa,
-        dcpa_nm=dcpa_nm,
-        vsep_at_cpa_ft=vsep_at_cpa_ft,
-        horiz_dist_now_nm=horiz_dist_now_nm,
-        dalt_now_ft=dalt_now_ft,
-        rel_hspd_kts=rel_hspd_kts,
-        rel_alt_now_ft=rel_alt_now_ft,
-        rel_vs_ft_min=rel_vs_ft_min,
-        n=n,
-    )
+def _cached(name):
+    """What :func:`_store` kept under ``name`` this sim time and traffic set,
+    else ``None``. A reset returns the clock to 0 with the same callsigns, so
+    the runtime calls :func:`invalidate_conflict_geometry` on every reset."""
+    hit = _CACHE.get(name)
+    return hit[1] if hit is not None and hit[0] == _step_key() else None
 
 
-def conflict_geometry() -> ConflictGeometry:
-    """Return the per-step conflict geometry, computing once and caching.
-
-    Keyed on ``(sim time, live-id tuple)``, so it recomputes when the sim
-    advances or the traffic set changes. The one thing that key cannot see is a
-    sim reset: the clock returns to 0 and a seeded episode brings back the same
-    callsigns, in possibly different places - so the runtime calls
-    :func:`invalidate_conflict_geometry` on every reset. Safe to call from cost
-    functions, the keep mask, and hooks; the O(N^2) geometry runs at most once
-    per step.
-    """
-    key = (getattr(getattr(bs, "sim", None), "simt", None), tuple(bs.traf.id))
-    if _CACHE["geom"] is None or _CACHE["key"] != key:
-        _CACHE["geom"] = _compute()
-        _CACHE["key"] = key
-    return _CACHE["geom"]
+def _store(name, value):
+    _CACHE[name] = (_step_key(), value)
+    return value
 
 
 def invalidate_conflict_geometry() -> None:
-    """Drop the cached geometry; the next :func:`conflict_geometry` recomputes."""
-    _CACHE["geom"] = None
-    _CACHE["key"] = None
+    """Drop everything cached; the next read recomputes."""
+    _CACHE.clear()
+
+
+def conflict_geometry() -> SimpleNamespace:
+    """Every pair's straight-line motion this step (see the module docstring)."""
+    return _cached("geometry") or _store("geometry", _compute())
+
+
+def _compute() -> SimpleNamespace:
+    n = len(bs.traf.id)
+    lat = np.asarray(bs.traf.lat, dtype=np.float64)
+    lon = np.asarray(bs.traf.lon, dtype=np.float64)
+    if n:
+        qdr, dist = kwikqdrdist_matrix(lat, lon, lat, lon)
+        qdr = np.radians(np.asarray(qdr, dtype=np.float64))
+        dist = np.asarray(dist, dtype=np.float64) * _NM  # m
+    else:
+        qdr = dist = np.zeros((0, 0))
+    dx, dy = dist * np.sin(qdr), dist * np.cos(qdr)  # j relative to i, m
+
+    trk = np.radians(np.asarray(bs.traf.trk, dtype=np.float64))
+    gs = np.asarray(bs.traf.gs, dtype=np.float64)
+    u, v = gs * np.sin(trk), gs * np.cos(trk)
+    du, dv = u[None, :] - u[:, None], v[None, :] - v[:, None]
+    # As BlueSky's StateBased.detect: the relative speed floored, the miss
+    # distance from the Pythagorean form.
+    dv2 = np.maximum(du * du + dv * dv, 1e-6)
+    tcpa = -(du * dx + dv * dy) / dv2
+    dcpa = np.sqrt(np.abs(dist * dist - tcpa * tcpa * dv2))
+
+    alt = np.asarray(bs.traf.alt, dtype=np.float64)
+    vs = np.asarray(bs.traf.vs, dtype=np.float64)
+    rel_alt = alt[None, :] - alt[:, None]
+    rel_vs = vs[None, :] - vs[:, None]
+
+    geom = SimpleNamespace(
+        n=n,
+        rel_east_now_nm=dx / _NM,
+        rel_north_now_nm=dy / _NM,
+        horiz_dist_now_nm=dist / _NM,
+        rel_vel_east_kts=du * _MS_TO_KTS,
+        rel_vel_north_kts=dv * _MS_TO_KTS,
+        rel_hspd_kts=np.sqrt(dv2) * _MS_TO_KTS,
+        tcpa_s=tcpa,
+        dcpa_nm=dcpa / _NM,
+        rel_alt_now_ft=rel_alt * _M_TO_FT,
+        dalt_now_ft=np.abs(rel_alt) * _M_TO_FT,
+        rel_vs_ft_min=rel_vs * _MS_TO_FTMIN,
+        vsep_at_cpa_ft=np.abs(rel_alt + rel_vs * np.maximum(tcpa, 0.0)) * _M_TO_FT,
+    )
+    for value in vars(geom).values():
+        if isinstance(value, np.ndarray):
+            np.fill_diagonal(value, 0.0)
+    return geom
+
+
+def detection(
+    rpz_nm: float | None = None,
+    vpz_ft: float | None = None,
+    lookahead_s: float | None = None,
+) -> SimpleNamespace:
+    """BlueSky's conflict detection on the current state, as ``N x N`` arrays:
+    ``in_conf`` and ``in_los`` (bool), and ``tlos_s`` - when each conflict
+    enters the protected zone (BlueSky's ``tLOS``), ``inf`` for no conflict.
+
+    The configured detector's own ``detect``, run now rather than read from its
+    last ``asas`` tick. With no argument it scores BlueSky's zone and lookahead
+    (per aircraft, as ZONER / ZONEDH / DTLOOK set them); each argument replaces
+    one for every aircraft - a wider zone to shape against, a shorter horizon
+    to show - still under BlueSky's rule.
+    """
+    name = ("detection", rpz_nm, vpz_ft, lookahead_s)
+    return _cached(name) or _store(name, _detect(bs.traf, rpz_nm, vpz_ft, lookahead_s))
+
+
+def _detect(traffic, rpz_nm=None, vpz_ft=None, lookahead_s=None) -> SimpleNamespace:
+    """BlueSky's ``detect`` over ``traffic`` (``bs.traf``, or one standing in
+    for it), laid out by index."""
+    cd = bs.traf.cd
+    n = len(traffic.id)
+
+    def zone(override, live, scale):
+        return np.asarray(live, dtype=np.float64)[:n] if override is None else np.full(n, float(override) * scale)
+
+    confpairs, lospairs, *_rest, tlos = cd.detect(
+        traffic,
+        traffic,
+        zone(rpz_nm, cd.rpz, _NM),
+        zone(vpz_ft, cd.hpz, _FT),
+        zone(lookahead_s, cd.dtlookahead, 1.0),
+    )
+    index = {acid: i for i, acid in enumerate(traffic.id)}
+    found = SimpleNamespace(
+        in_conf=np.zeros((n, n), dtype=bool),
+        in_los=np.zeros((n, n), dtype=bool),
+        tlos_s=np.full((n, n), np.inf),
+    )
+    for (a, b), t in zip(confpairs, tlos):
+        found.in_conf[index[a], index[b]] = True
+        found.tlos_s[index[a], index[b]] = t
+    for a, b in lospairs:
+        found.in_los[index[a], index[b]] = True
+    return found
 
 
 class ConflictView:
-    """The ownship's per-step conflict view over the other aircraft.
+    """The pair arrays sliced by aircraft index: ``view.tcpa_s`` is
+    ``conflict_geometry().tcpa_s[own, others]``.
 
-    Exposed as ``context.conflicts``. Per-intruder arrays are aligned to *all*
-    other live aircraft (``bs.traf`` order excluding self) - the same ordering as
-    ``context.obs["intruders"]`` and the obs intruder block. All reductions are
-    safe when the agent is alone (return ``inf`` / empty arrays).
+    ``ConflictView(i)`` is ownship ``i``'s row over every other aircraft, in
+    ``bs.traf`` order - ``context.conflicts`` in a hook, aligned with the
+    observation's intruder rows. ``own`` and ``others`` may also be index
+    arrays that broadcast, as the pair fields use it.
     """
 
-    __slots__ = ("_g", "_i", "_others")
+    __slots__ = ("_geom", "_other", "_own")
 
-    def __init__(self, acidx: int, geom: ConflictGeometry | None = None, others=None):
-        self._i = int(acidx)
-        self._g = geom if geom is not None else conflict_geometry()
+    def __init__(self, own, others=None) -> None:
+        self._geom = conflict_geometry()
         if others is None:
-            others = np.array(
-                [j for j in range(self._g.n) if j != self._i], dtype=np.intp
-            )
-        self._others = np.asarray(others, dtype=np.intp)
+            others = np.array([j for j in range(self._geom.n) if j != own], dtype=np.intp)
+        self._own = own
+        self._other = others
 
-    def _row(self, name: str) -> np.ndarray:
-        m = getattr(self._g, name)
-        if self._i >= self._g.n or self._others.size == 0:
-            return np.empty(0, dtype=m.dtype)
-        return m[self._i, self._others]
-
-    # --- raw per-intruder arrays (aligned to other live aircraft) ---
-    @property
-    def tcpa_s(self) -> np.ndarray:
-        return self._row("tcpa_s")
-
-    @property
-    def dcpa_nm(self) -> np.ndarray:
-        return self._row("dcpa_nm")
-
-    @property
-    def vsep_at_cpa_ft(self) -> np.ndarray:
-        return self._row("vsep_at_cpa_ft")
-
-    @property
-    def horiz_dist_now_nm(self) -> np.ndarray:
-        return self._row("horiz_dist_now_nm")
-
-    @property
-    def dalt_now_ft(self) -> np.ndarray:
-        return self._row("dalt_now_ft")
-
-    @property
-    def rel_hspd_kts(self) -> np.ndarray:
-        return self._row("rel_hspd_kts")
-
-    @property
-    def rel_alt_now_ft(self) -> np.ndarray:
-        return self._row("rel_alt_now_ft")
-
-    @property
-    def rel_vs_ft_min(self) -> np.ndarray:
-        return self._row("rel_vs_ft_min")
-
-    # --- scalar reductions (safe on empty) ---
-    @property
-    def min_tcpa_s(self) -> float:
-        row = self.tcpa_s
-        pos = row[row > 0.0]
-        return float(pos.min()) if pos.size else float("inf")
-
-    @property
-    def min_dcpa_nm(self) -> float:
-        row = self.dcpa_nm
-        return float(row.min()) if row.size else float("inf")
-
-    @property
-    def min_horiz_dist_now_nm(self) -> float:
-        row = self.horiz_dist_now_nm
-        return float(row.min()) if row.size else float("inf")
-
-    # --- filters ---
-    def within(self, horizon_s: float) -> ConflictView:
-        """A view restricted to intruders whose (converging) horizontal CPA is
-        within ``horizon_s`` seconds."""
-        t = self.tcpa_s
-        if t.size == 0:
-            return ConflictView(self._i, self._g, self._others)
-        mask = (t > 0.0) & (t <= horizon_s)
-        return ConflictView(self._i, self._g, self._others[mask])
-
-    def __len__(self) -> int:
-        return int(self._others.size)
-
-    def __iter__(self):
-        ids = bs.traf.id
-        tcpa = self.tcpa_s
-        dcpa = self.dcpa_nm
-        vsep = self.vsep_at_cpa_ft
-        dist = self.horiz_dist_now_nm
-        for k, j in enumerate(self._others):
-            yield _ConflictRecord(
-                intruder_id=ids[int(j)],
-                tcpa_s=float(tcpa[k]),
-                dcpa_nm=float(dcpa[k]),
-                vsep_at_cpa_ft=float(vsep[k]),
-                horiz_dist_now_nm=float(dist[k]),
-            )
+    def __getattr__(self, name: str) -> np.ndarray:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._geom, name)[self._own, self._other]
 
 
-class _ConflictRecord:
-    """One (ownship, intruder) predicted encounter, yielded when iterating a view."""
-
-    __slots__ = ("dcpa_nm", "horiz_dist_now_nm", "intruder_id", "tcpa_s", "vsep_at_cpa_ft")
-
-    def __init__(self, intruder_id, tcpa_s, dcpa_nm, vsep_at_cpa_ft, horiz_dist_now_nm):
-        self.intruder_id = intruder_id
-        self.tcpa_s = tcpa_s
-        self.dcpa_nm = dcpa_nm
-        self.vsep_at_cpa_ft = vsep_at_cpa_ft
-        self.horiz_dist_now_nm = horiz_dist_now_nm
-
-
-def predicted_tlos_s(view: ConflictView, rpz_nm: float, vpz_ft: float) -> np.ndarray:
-    """Predicted time to 3-D loss-of-separation entry (BlueSky ``tinconf``), seconds.
-
-    A *derived, thresholded* quantity, so - by this module's contract - it is a
-    parameterized **function** taking the caller's ``rpz``/``vpz``, not a
-    ``ConflictView`` primitive. It exists as the single shared implementation so
-    every consumer (the cost's imminence term, the critic's tLOS obs field) reads
-    one ``tinconf``, never a divergent copy.
-
-    Mirrors ``StateBased.detect`` over the row's raw primitives:
-    ``tinconf = max(tinhor, tinver)`` of the horizontal (``dcpa < rpz``) and
-    vertical (``|rel_alt| < vpz``) entry times, using the exposed ``rel_hspd_kts``
-    (stable through CPA) and the signed ``rel_alt_now_ft`` / ``rel_vs_ft_min``.
-    Returns ``+inf`` where no conflict is predicted (a band never breached, the two
-    windows disjoint, or the encounter already fully passed) and ``<= 0`` while
-    already inside the PZ.
-    """
-    tcpa = np.asarray(view.tcpa_s, dtype=np.float64)
-    if tcpa.size == 0:
-        return tcpa
-    dcpa = np.asarray(view.dcpa_nm, dtype=np.float64)
-
-    # Horizontal entry/exit (tinhor / touthor).
-    swhor = dcpa < rpz_nm
-    vrel_nm_s = np.asarray(view.rel_hspd_kts, dtype=np.float64) / 3600.0
-    dxinhor = np.sqrt(np.maximum(0.0, rpz_nm**2 - dcpa**2))
-    dtinhor = dxinhor / vrel_nm_s
-    tinhor = np.where(swhor, tcpa - dtinhor, np.inf)
-    touthor = np.where(swhor, tcpa + dtinhor, -np.inf)
-
-    # Vertical band crossing (tinver / toutver) of the signed rel-alt line.
-    d0 = np.asarray(view.rel_alt_now_ft, dtype=np.float64)
-    dvs = np.asarray(view.rel_vs_ft_min, dtype=np.float64) / 60.0  # ft/s, signed
-    dvs = np.where(np.abs(dvs) < 1e-6, 1e-6, dvs)                  # guard, as BlueSky
-    t_hi = (vpz_ft - d0) / dvs
-    t_lo = (-vpz_ft - d0) / dvs
-    tinver = np.minimum(t_hi, t_lo)
-    toutver = np.maximum(t_hi, t_lo)
-
-    tinconf = np.maximum(tinhor, tinver)
-    toutconf = np.minimum(touthor, toutver)
-    valid = swhor & (tinconf <= toutconf) & (toutconf > 0.0)
-    return np.where(valid, tinconf, np.inf)
-
-
-def _shared_conflict_window(
-    view: ConflictView, rpz_nm: float, vpz_ft: float
-) -> tuple[np.ndarray, ...]:
-    """``(valid, tinconf, toutconf, d0, dvs)`` for the shared 3-D conflict window.
-
-    The single implementation of the window :func:`windowed_min_vsep_ft` and
-    :func:`windowed_signed_vsep_at_entry_ft` both key off, so the magnitude the
-    cost grades and the sign the policy observes can never disagree about which
-    encounter they describe. ``d0`` / ``dvs`` are the signed rel-alt line's
-    intercept (ft) and slope (ft/s), returned so callers can sample it.
-
-    Deliberately NOT shared with :func:`predicted_tlos_s`: that function divides
-    by ``vrel_nm_s`` unguarded, and folding it in here would silently change the
-    cost's imminence term. Left alone on purpose.
-    """
+def _conflict_window(view, rpz_nm: float, vpz_ft: float) -> tuple[np.ndarray, ...]:
+    """``(valid, tinconf, toutconf, d0, dvs)``: when each pair is inside both the
+    ``rpz_nm`` and the ``vpz_ft`` band at once, if ever - ``d0`` / ``dvs`` the
+    signed relative altitude (ft) and its rate (ft/s). Unlike
+    :func:`detection` it is not cut at a lookahead, and gives the window's end:
+    what the windowed measures below sample within."""
     tcpa = np.asarray(view.tcpa_s, dtype=np.float64)
     dcpa = np.asarray(view.dcpa_nm, dtype=np.float64)
 
-    # Horizontal entry/exit (tinhor / touthor) - mirrors predicted_tlos_s.
     swhor = dcpa < rpz_nm
     vrel_nm_s = np.asarray(view.rel_hspd_kts, dtype=np.float64) / 3600.0
-    dxinhor = np.sqrt(np.maximum(0.0, rpz_nm**2 - dcpa**2))
-    dtinhor = dxinhor / np.where(vrel_nm_s > 1e-9, vrel_nm_s, 1e-9)
+    dtinhor = np.sqrt(np.maximum(0.0, rpz_nm**2 - dcpa**2)) / np.maximum(vrel_nm_s, 1e-9)
     tinhor = np.where(swhor, tcpa - dtinhor, np.inf)
     touthor = np.where(swhor, tcpa + dtinhor, -np.inf)
 
-    # Vertical band crossing (tinver / toutver) of the signed rel-alt line.
     d0 = np.asarray(view.rel_alt_now_ft, dtype=np.float64)
-    dvs = np.asarray(view.rel_vs_ft_min, dtype=np.float64) / 60.0  # ft/s, signed
-    dvs = np.where(np.abs(dvs) < 1e-6, 1e-6, dvs)                  # guard, as BlueSky
+    dvs = np.asarray(view.rel_vs_ft_min, dtype=np.float64) / 60.0
+    dvs = np.where(np.abs(dvs) < 1e-6, 1e-6, dvs)  # as BlueSky
     t_hi = (vpz_ft - d0) / dvs
     t_lo = (-vpz_ft - d0) / dvs
-    tinver = np.minimum(t_hi, t_lo)
-    toutver = np.maximum(t_hi, t_lo)
 
-    tinconf = np.maximum(tinhor, tinver)
-    toutconf = np.minimum(touthor, toutver)
+    tinconf = np.maximum(tinhor, np.minimum(t_hi, t_lo))
+    toutconf = np.minimum(touthor, np.maximum(t_hi, t_lo))
     valid = swhor & (tinconf <= toutconf) & (toutconf > 0.0)
     return valid, tinconf, toutconf, d0, dvs
 
@@ -455,12 +300,11 @@ def _shared_conflict_window(
 def windowed_min_vsep_ft(view: ConflictView, rpz_nm: float, vpz_ft: float) -> np.ndarray:
     """Minimum ``|relative altitude|`` (ft) over the shared 3-D conflict window.
 
-    A *derived* quantity (parameterized by ``rpz``/``vpz`` per this module's
-    contract, like :func:`predicted_tlos_s`), and the single shared implementation
+    A *derived* quantity (parameterized by ``rpz``/``vpz``), and the single shared implementation
     of the vertical separation the cost's penetration term (``r_v``) grades: the
     signed rel-alt line ``|d0 + dvs*t|`` sampled at its in-window minimum - the
     vertical zero-crossing ``-d0/dvs`` clipped into ``[max(tinconf, 0), toutconf]``
-    (the SAME window :func:`predicted_tlos_s` keys off).
+    (:func:`_conflict_window`).
 
     Supersedes ``vsep_at_cpa_ft`` (vertical sep at the *horizontal* CPA instant)
     for conflict pairs: that measure reads ~0 for altitude-crossing traffic whose
@@ -476,7 +320,7 @@ def windowed_min_vsep_ft(view: ConflictView, rpz_nm: float, vpz_ft: float) -> np
     tcpa = np.asarray(view.tcpa_s, dtype=np.float64)
     if tcpa.size == 0:
         return tcpa
-    valid, tinconf, toutconf, d0, dvs = _shared_conflict_window(view, rpz_nm, vpz_ft)
+    valid, tinconf, toutconf, d0, dvs = _conflict_window(view, rpz_nm, vpz_ft)
 
     # Vertical sep at its in-window minimum (the rel-alt zero-crossing clamped
     # into the shared window), exactly the cost's ``v_min``.
@@ -511,7 +355,7 @@ def windowed_min_hsep_nm(view: ConflictView, rpz_nm: float, vpz_ft: float) -> np
     tcpa = np.asarray(view.tcpa_s, dtype=np.float64)
     if tcpa.size == 0:
         return tcpa
-    valid, tinconf, toutconf, _d0, _dvs = _shared_conflict_window(view, rpz_nm, vpz_ft)
+    valid, tinconf, toutconf, _d0, _dvs = _conflict_window(view, rpz_nm, vpz_ft)
 
     dcpa = np.asarray(view.dcpa_nm, dtype=np.float64)
     vrel_nm_s = np.asarray(view.rel_hspd_kts, dtype=np.float64) / 3600.0
@@ -544,60 +388,8 @@ def windowed_signed_vsep_at_entry_ft(
     tcpa = np.asarray(view.tcpa_s, dtype=np.float64)
     if tcpa.size == 0:
         return tcpa
-    valid, tinconf, _toutconf, d0, dvs = _shared_conflict_window(view, rpz_nm, vpz_ft)
+    valid, tinconf, _toutconf, d0, dvs = _conflict_window(view, rpz_nm, vpz_ft)
 
     entry = d0 + dvs * np.maximum(tinconf, 0.0)
     miss = d0 + dvs * np.maximum(tcpa, 0.0)
     return np.where(valid, entry, miss)
-
-
-def safety_margin_pairs(
-    view: ConflictView,
-    rpz_nm: float,
-    vpz_ft: float,
-    reach: float = 1.0,
-) -> np.ndarray:
-    """Per-intruder signed safety margin, clipped to ``[-1, reach]``.
-
-    ``max(h/rpz - 1, |dz|/vpz - 1)``: positive iff the pair is clear in at least
-    ONE axis (ICAO's rule, and exactly the complement of the LoS predicate
-    ``h < rpz and |dz| < vpz``), zero on the protected-zone surface, negative
-    inside it with magnitude equal to the fractional penetration of the axis that
-    is least breached.
-
-    Unlike :func:`windowed_min_vsep_ft` this is INSTANTANEOUS - no constant-
-    velocity projection - because it is meant as the running payoff ``l(x)`` of a
-    Hamilton-Jacobi safety value, which supplies the lookahead itself by
-    propagating ``min`` over the trajectory. Baking a linear prediction in here
-    would reintroduce the very assumption such a value function exists to avoid.
-
-    ``reach`` caps the safe side. Uncapped, an intruder 100 nm away scores 19 and
-    a regression target spans ``[-1, inf)``, so a learned head burns its capacity
-    on how far away irrelevant traffic is; capping makes the informative band
-    ``rpz .. (1 + reach) * rpz`` and everything beyond it indistinguishably safe.
-    It is the analogue of the shaped-zone radius in the analytic cost.
-    """
-    h_nm = np.asarray(view.horiz_dist_now_nm, dtype=np.float64)
-    dz_ft = np.asarray(view.dalt_now_ft, dtype=np.float64)  # already absolute
-    margin = np.maximum(h_nm / rpz_nm - 1.0, dz_ft / vpz_ft - 1.0)
-    return np.clip(margin, -1.0, float(reach))
-
-
-def safety_margin(
-    view: ConflictView,
-    rpz_nm: float,
-    vpz_ft: float,
-    reach: float = 1.0,
-) -> float:
-    """Ownship safety margin: the ``min`` of :func:`safety_margin_pairs`.
-
-    ``min`` because the state is unsafe if ANY intruder is in LoS, so the closest
-    pair defines the margin. Taken over CLIPPED per-pair margins on purpose: on
-    the raw values a single distant aircraft cannot mask a near one, but the
-    saturated form also lets several near intruders each sit in the informative
-    band instead of only the single closest registering.
-
-    Returns ``reach`` (maximally safe) when there are no intruders.
-    """
-    pairs = safety_margin_pairs(view, rpz_nm, vpz_ft, reach)
-    return float(pairs.min()) if pairs.size else float(reach)

@@ -99,7 +99,6 @@ _CASES = [
     ("head-on", obs.RelPosAtCpaAlongTrackNm(), 0.0),
     ("head-on", obs.RelPosAtCpaCrossTrackNm(), 0.0),
     ("head-on", obs.RelVsFtMin(), 0.0),
-    ("head-on", obs.VerticalSepAtCpaFt(), 0.0),
     ("head-on", obs.ConflictTcpaS(), 72.0),  # 10 nm at 500 kts
     ("head-on", obs.ConflictHorizontalDistAtCpaNm(), 0.0),
     # Enters a 5 nm zone after closing 5 nm at 500 kts.
@@ -125,8 +124,6 @@ _CASES = [
     ("crossing", obs.BearingRateDegPerSec(), math.degrees(-25.0 / 3600.0)),
     ("crossing", obs.ClosingRateKts(), 250.0),  # the northward gap closes at 250
     ("head-on, descending", obs.RelVsFtMin(), -500.0),
-    # 1000 ft apart, closing vertically at 500 ft/min for 72 s: 400 ft left.
-    ("head-on, descending", obs.VerticalSepAtCpaFt(), 400.0),
 ]
 
 

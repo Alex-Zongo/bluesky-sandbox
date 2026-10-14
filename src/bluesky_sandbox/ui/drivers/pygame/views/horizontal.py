@@ -17,7 +17,7 @@ import pygame
 from bluesky.tools.aero import ft, kts
 
 from bluesky_sandbox.interface.task import WaypointReadoutKey
-from bluesky_sandbox.sim.geometry.conflict import ConflictView, predicted_tlos_s
+from bluesky_sandbox.sim.geometry.conflict import ConflictView, detection
 from bluesky_sandbox.ui.drivers.common import (
     CursorHint,
     CursorHintName,
@@ -420,8 +420,8 @@ class HorizontalView(PygameView):
         (apex = A shifted by ``v_B``, half-angle ``asin(rpz/range)``), with the
         lookahead-truncation circle (velocities inside it reach the PZ only after
         ``dtlookahead``). A cone - and A's velocity vector - is RED iff the pair is
-        an actual conflict now: ``predicted_tlos_s < T`` (the SAME 3-D ``tinconf``
-        from ``StateBased.detect`` that the conflict cost mirrors); else amber.
+        in conflict now - BlueSky's own detection, over the horizon ``T``; else
+        amber.
         Vertically-separated pairs are skipped. The horizon ``T`` is the detector
         lookahead scaled by ``driver.vo_horizon_frac`` (the plan-view slider); at
         the default frac 1.0 the overlay coincides 1:1 with BlueSky's detector,
@@ -461,13 +461,10 @@ class HorizontalView(PygameView):
         others = np.array([j for j in range(bs.traf.ntraf) if j != i], dtype=int)
         if others.size == 0:
             return
-        view = ConflictView(i, others=others)
-        # Per-pair status: 3-D tinconf < horizon. At frac 1.0 (T == tlook) this is
-        # exactly BlueSky's detector; dragging the slider down evaluates the same
-        # 3-D tinconf against the shorter horizon, so conflicts drop out as the
-        # lookahead shrinks (and reappear as it grows).
-        tlos = np.asarray(predicted_tlos_s(view, r_m / 1852.0, h_m / 0.3048), float)
-        is_conflict = np.isfinite(tlos) & (tlos < T)
+        view = ConflictView(i, others)
+        # BlueSky's detection over the horizon: at frac 1.0 its own lookahead, and
+        # conflicts drop out as the slider shortens it (and reappear as it grows).
+        is_conflict = detection(lookahead_s=None if frac == 1.0 else T).in_conf[i, others]
         # Vertical band overlap with [0, lookahead] (independent of horiz. velocity):
         # a horizontal cone can only ever conflict if the pair is vertically close
         # within the horizon, so skip cones for vertically-separated traffic.
