@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from bluesky_sandbox.env import BlueskyEnv
+from typing import Unpack
+
+from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.env import BlueskyEnv, EnvOptions
 
 from .config import CONFIG
 from .scenario import RandomEncountersScenario
@@ -15,27 +18,30 @@ if TYPE_CHECKING:
     from .task_types import TaskAgentStepContext
 
 
+class RandomEncountersEnvKwargs(EnvOptions, total=False):
+    """What :class:`RandomEncountersEnv` takes, as keywords - to pass on, typed,
+    with ``**env_kwargs: Unpack[RandomEncountersEnvKwargs]``."""
+
+    config: EnvConfig
+    scenario: RandomEncountersScenario
+
+
 class RandomEncountersEnv(BlueskyEnv):
-    """Generated environment class with task behavior in Python code."""
+    """Generated environment class with task behavior in Python code.
+
+    ``config`` defaults to this task's (``CONFIG``) - pass a changed copy,
+    ``dataclasses.replace(CONFIG, dt=5.0)``, to run it otherwise; ``options``
+    are how it is shown and paced (``render_mode``, ``views``, ...)."""
 
     def __init__(
         self,
         *,
+        config: EnvConfig = CONFIG,
         scenario: RandomEncountersScenario | None = None,
-        render_mode=None,
-        realtime: bool = False,
-        views=None,
-        frame_driver=None,
+        **options: Unpack[EnvOptions],
     ) -> None:
         scenario = RandomEncountersScenario() if scenario is None else scenario
-        super().__init__(
-            config=CONFIG,
-            scenario=scenario,
-            render_mode=render_mode,
-            realtime=realtime,
-            views=views,
-            frame_driver=frame_driver,
-        )
+        super().__init__(config=config, scenario=scenario, **options)
 
     def define_task_info_providers(self):
         return ()

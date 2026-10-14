@@ -1,7 +1,8 @@
 """Modified Voltage Potential (MVP) conflict resolution as a policy, flying the
-Random Encounters environment beside it (``random_encounters``)::
+Random Encounters environment (``examples/environments/random_encounters``).
+From the repository root::
 
-    python mvp.py [episodes] [--render]
+    python -m examples.geometric.mvp [episodes] [--render [MODE]]
 
 BlueSky's own resolution - ``bluesky.traffic.asas.mvp.MVP`` with its default
 ``PastCPA`` resume - computed from what each aircraft observes and flown with
@@ -37,11 +38,24 @@ from bluesky.tools.aero import ft, kts, nm, vtas2cas
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.layout import observation_layout, unflatten_action
-from bluesky_sandbox.interface.fields.actions import ActionMask, AutopilotLnav, HdgDeg, SpdKts
-from random_encounters import RandomEncountersEnv
+from bluesky_sandbox.interface.fields.actions import (
+    ActionMask,
+    AutopilotLnav,
+    HdgDeg,
+    SpdKts,
+)
+from bluesky_sandbox.ui.drivers import WINDOW_RENDER_MODES
+from examples.environments.random_encounters import RandomEncountersEnv
 
 
-_OWNSHIP = ("trk_deg", "gs_kts", "alt_ft", "ap_cas_kts", "perf_vmin_kts", "perf_vmax_kts")
+_OWNSHIP = (
+    "trk_deg",
+    "gs_kts",
+    "alt_ft",
+    "ap_cas_kts",
+    "perf_vmin_kts",
+    "perf_vmax_kts",
+)
 _INTRUDERS = (
     "rel_pos_along_track_nm",
     "rel_pos_cross_track_nm",
@@ -92,18 +106,24 @@ class MVP:
 
     def __init__(self, config: EnvConfig, *, resofach: float = 1.01) -> None:
         if config.pz_radius_nm is None:
-            raise ValueError("MVP resolves to the protected zone: set EnvConfig.pz_radius_nm.")
+            raise ValueError(
+                "MVP resolves to the protected zone: set EnvConfig.pz_radius_nm."
+            )
         layout = observation_layout(config)
         for part, names in (("ownship", _OWNSHIP), ("intruders", _INTRUDERS)):
             have = {slot.name for slot in layout.get(part, [])}
             if missing := [name for name in names if name not in have]:
-                raise ValueError(f"MVP reads {part} fields {missing}; the observation has none.")
+                raise ValueError(
+                    f"MVP reads {part} fields {missing}; the observation has none."
+                )
         self._config = config
         self._fields = list(config.action_fields)
         for kind in _ACTIONS:
             field = next((f for f in self._fields if type(f) is kind), None)
             if field is None or getattr(field, "normalizer", None) is not None:
-                raise ValueError(f"MVP flies {kind.__name__} in raw values: give it, unnormalized, as a clearance.")
+                raise ValueError(
+                    f"MVP flies {kind.__name__} in raw values: give it, unnormalized, as a clearance."
+                )
         self._rpz_m = float(config.pz_radius_nm) * nm
         self.resofach = float(resofach)
         self.reset()
@@ -125,8 +145,20 @@ class MVP:
                 if other in own:
                     pairs[acid, other] = (
                         # Cross, along: a rotation of east, north.
-                        np.array([rows["rel_pos_cross_track_nm"][k], rows["rel_pos_along_track_nm"][k]]) * nm,
-                        np.array([rows["rel_vel_cross_track_kts"][k], rows["rel_vel_along_track_kts"][k]]) * kts,
+                        np.array(
+                            [
+                                rows["rel_pos_cross_track_nm"][k],
+                                rows["rel_pos_along_track_nm"][k],
+                            ]
+                        )
+                        * nm,
+                        np.array(
+                            [
+                                rows["rel_vel_cross_track_kts"][k],
+                                rows["rel_vel_along_track_kts"][k],
+                            ]
+                        )
+                        * kts,
                         float(rows["conflict_tcpa_s"][k]),
                         bool(rows["in_conf"][k] > 0.5),
                     )
@@ -157,11 +189,18 @@ class MVP:
         targets = {}
         for acid, ownship in own.items():
             cross, along = dv[acid][0], float(ownship["gs_kts"]) * kts + dv[acid][1]
-            track = (float(ownship["trk_deg"]) + math.degrees(math.atan2(cross, along))) % 360.0
+            track = (
+                float(ownship["trk_deg"]) + math.degrees(math.atan2(cross, along))
+            ) % 360.0
             # Capped as BlueSky does: the envelope's speeds against ground speed.
-            gs = min(max(math.hypot(cross, along), float(ownship["perf_vmin_kts"]) * kts), float(ownship["perf_vmax_kts"]) * kts)
+            gs = min(
+                max(math.hypot(cross, along), float(ownship["perf_vmin_kts"]) * kts),
+                float(ownship["perf_vmax_kts"]) * kts,
+            )
             # As a CAS by the atmosphere the autopilot converts it back with.
-            cas = float(vtas2cas(np.array([gs]), np.array([float(ownship["alt_ft"]) * ft]))[0])
+            cas = float(
+                vtas2cas(np.array([gs]), np.array([float(ownship["alt_ft"]) * ft]))[0]
+            )
             targets[acid] = (track, cas / kts)
         return targets
 
@@ -181,8 +220,12 @@ class MVP:
                 hdist = math.hypot(drel[0], drel[1])
                 past_cpa = float(drel @ vrel) > 0.0
                 # The intruder's track against the own: (0, gs) in this frame.
-                relative_trk = math.degrees(math.atan2(vrel[0], float(own[acid]["gs_kts"]) * kts + vrel[1]))
-                bouncing = abs(relative_trk) < 30.0 and hdist < self._rpz_m * self.resofach
+                relative_trk = math.degrees(
+                    math.atan2(vrel[0], float(own[acid]["gs_kts"]) * kts + vrel[1])
+                )
+                bouncing = (
+                    abs(relative_trk) < 30.0 and hdist < self._rpz_m * self.resofach
+                )
                 resolving = not past_cpa or hdist < self._rpz_m or bouncing
             if resolving:
                 active[acid] = True
@@ -210,10 +253,17 @@ def main() -> None:
     """Fly Random Encounters with MVP and count the pairs losing separation."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("episodes", type=int, nargs="?", default=10)
-    parser.add_argument("--render", action="store_true", help="watch it in pygame")
+    parser.add_argument(
+        "--render",
+        nargs="?",
+        const="pygame",
+        choices=WINDOW_RENDER_MODES,
+        help="watch it in a window: pygame unless named",
+    )
     args = parser.parse_args()
 
-    env = RandomEncountersEnv(render_mode="pygame" if args.render else None)
+    # Watched, the episode runs in real time: one second a step.
+    env = RandomEncountersEnv(render_mode=args.render, realtime=args.render is not None)
     try:
         for seed in range(args.episodes):
             env.reset(seed=seed)
@@ -221,6 +271,8 @@ def main() -> None:
             policy = MVP(env.config, resofach=bs.settings.asas_marh)
             losses = set()
             while env.agents:
+                if args.render:
+                    env.render()  # the first call opens the window
                 env.step(policy.act({agent: env.raw_observation(agent) for agent in env.agents}))
                 losses |= {frozenset(pair) for pair in bs.traf.cd.lospairs}
             print(f"episode {seed}: {len(env.spawn_log)} aircraft, {len(losses)} pairs lost separation")
