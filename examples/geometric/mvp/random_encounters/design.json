@@ -1,0 +1,432 @@
+{
+  "version": 1,
+  "nav_cycle": null,
+  "metadata": {
+    "name": "Random Encounters",
+    "note": "2-6 aircraft enter a ring 40-45 NM out at once, all at FL200, at 260-300 KT, each on a straight track through its own point within 8 NM of the center to where that line leaves the airspace: their tracks cross near the center, so encounters of every angle develop minutes after entry. The ENTRY spawn region draws them; its route rule gives each its track. Every aircraft is an agent. Its actions - a heading and a speed clearance, and resuming own navigation - let a policy fly a resolution and hand the aircraft back to its route; with no clearance given, the aircraft fly their routes."
+  },
+  "airspace": {
+    "ref": "airspace"
+  },
+  "queryables": {
+    "exit": {
+      "type": "waypoint",
+      "lat": 56.0,
+      "lon": 2.0,
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": false,
+      "render_label": false,
+      "track_temporal_state": false
+    }
+  },
+  "shapes": {
+    "airspace": {
+      "type": "region",
+      "footprint": {
+        "type": "disk",
+        "center": {
+          "lat_deg": 56.0,
+          "lon_deg": 2.0
+        },
+        "radius_nm": 60,
+        "n_vertices": 72
+      },
+      "altitude": null
+    },
+    "entry": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 56.0,
+          "lon_deg": 2.0
+        },
+        "inner_radius_nm": 40,
+        "outer_radius_nm": 45,
+        "bearing_deg": 0,
+        "half_angle_deg": 180,
+        "n_vertices": 72
+      },
+      "altitude": null
+    },
+    "crossing": {
+      "type": "region",
+      "footprint": {
+        "type": "disk",
+        "center": {
+          "lat_deg": 56.0,
+          "lon_deg": 2.0
+        },
+        "radius_nm": 8,
+        "n_vertices": 48
+      },
+      "altitude": null
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "route": null,
+    "routes": {},
+    "regions": [
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "entry"
+        },
+        "name": "ENTRY",
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [],
+          "kwds": {
+            "low": 2,
+            "high": 7,
+            "loc": 0
+          }
+        },
+        "params": {
+          "alt_ft": 20000,
+          "spd_kts": {
+            "type": "range",
+            "low": 260,
+            "high": 300
+          },
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "spawn_time": 0,
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "A321": 1,
+            "B738": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "route": null,
+        "conflict_free_spawn": true,
+        "render_shape": true,
+        "render_name": true,
+        "route_rule": "# Straight through a point drawn in the crossing area, on to where that\n# line leaves the airspace: every track crosses the center area, and an\n# aircraft handed back its route flies on outward, not back into the\n# encounter.\ncross = ctx.shapes[\"crossing\"].sample_point(rng)\ntrack, _ = kwikqdrdist(request.at.lat_deg, request.at.lon_deg, *cross)\nlat, lon = cross\nwhile ctx.airspace.contains(lat, lon):\n    lat, lon = qdrpos(lat, lon, track, 1.0)\nreturn [{\"waypoint\": \"exit\", \"sample\": RegionBounds(PointFootprint(LatLon(lat, lon)))}]\n"
+      }
+    ]
+  },
+  "transform": null,
+  "env": {
+    "obs_fields": [
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "low": 0,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointTrackErrorDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "kwargs": {
+          "low": 15000,
+          "high": 25000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "CasKts",
+        "kwargs": {
+          "low": 200,
+          "high": 350,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "VsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "TrkDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "GsKts",
+        "kwargs": {
+          "low": 250,
+          "high": 550,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ApCasKts",
+        "kwargs": {
+          "low": 200,
+          "high": 350,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "PerfVminKts",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "PerfVmaxKts",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "RelPosAlongTrackNm",
+        "kwargs": {
+          "low": -60,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelPosCrossTrackNm",
+        "kwargs": {
+          "low": -60,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -2000,
+          "high": 2000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVelAlongTrackKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVelCrossTrackKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "low": 0,
+          "high": 90,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictTcpaS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictTlosS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "InConf"
+      },
+      {
+        "field": "InLosNow"
+      }
+    ],
+    "critic_obs_fields": null,
+    "critic_intruder_obs_fields": null,
+    "state_fields": null,
+    "intruder_state_fields": null,
+    "action_fields": [
+      {
+        "field": "HdgDeg",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      },
+      {
+        "field": "SpdKts",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      },
+      {
+        "field": "AutopilotLnav",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      }
+    ],
+    "task_info_setup": "",
+    "task_info": [],
+    "task_info_providers": [],
+    "hook_setup": "",
+    "hooks": {
+      "cost": "# Seconds in loss of separation this step.\nreturn float(context.separation.los.time.during_step_s)\n",
+      "reward": "# Every minute flown costs 0.1, every second in loss of separation 1:\n# through the encounter safely, and without a long detour.\nreturn -0.1 * self.config.dt / 60.0 - float(context.separation.los.time.during_step_s)\n",
+      "terminated": "# Out of the airspace: through the encounter.\nreturn not info[\"in_airspace\"]\n",
+      "truncated": "return False\n"
+    },
+    "dt": 1.0,
+    "simdt": 1.0,
+    "asas_dt": 1.0,
+    "cd_method": "CSTATEBASED",
+    "reso_method": null,
+    "intruder_obs_bounds": "ownship",
+    "pz_radius_nm": 5,
+    "pz_height_ft": 1000,
+    "lookahead_s": 300,
+    "performance_model": "openap",
+    "wind_dir_deg": 270.0,
+    "wind_kts": 0.0,
+    "turbulence_kts": 0.0,
+    "gust_tau_s": 30.0
+  },
+  "code": {},
+  "scenario_setup": "from bluesky.tools.geo import kwikqdrdist, qdrpos\n",
+  "scenario_hooks": {}
+}
