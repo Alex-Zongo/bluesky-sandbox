@@ -9,6 +9,8 @@ from typing import Annotated, ClassVar
 
 import bluesky as bs
 
+from bluesky_sandbox.sim.performance.speeds import selected_cas_ms
+
 from .._common import _InKnots
 from ..base import (
     ActionField,
@@ -176,10 +178,10 @@ class ApHdgDeltaDeg(_HeadingTarget):
 
 @dataclass(frozen=True)
 class ApSpdDeltaKts(SpdDeltaKts):
-    """Set autopilot selected calibrated airspeed relative to current CAS.
-
-    The same action as :class:`SpdDeltaKts` - BlueSky's ``SPD`` sets the
-    autopilot selection either way - under the name existing configs use.
+    """Change the autopilot's selected calibrated airspeed by a delta, knots:
+    from the speed the aircraft is cleared to - its procedure's, under VNAV, or
+    the one it holds - not from the CAS it flies now, which lags it while the
+    aircraft accelerates or slows. With ``high=0`` it only ever slows.
     """
 
     meta = ActionMeta(
@@ -189,6 +191,9 @@ class ApSpdDeltaKts(SpdDeltaKts):
         mode=ActionMode.DELTA,
         dynamic_bounds=True,
     )
+
+    def _nominal(self, idx: int) -> float:
+        return self._convert(float(selected_cas_ms(idx)[0]))
 
 
 @dataclass(frozen=True)

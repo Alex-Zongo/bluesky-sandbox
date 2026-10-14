@@ -836,8 +836,10 @@ function ms(x: number | undefined): string {
 }
 
 // The choice in the middle for a step action - no change, where zero is one,
-// else one step up - and zero for a continuous one.
+// else one step up, else the last step down - and zero for a continuous one.
 function defaultGive(step?: SpecDict | null): number {
   const each = Number(step?.kwargs?.steps_each_way ?? 10);
-  return step && Number.isFinite(each) ? each : 0;
+  const up = Number(step?.kwargs?.steps_up ?? each);
+  const choices = each + up + (step?.kwargs?.include_zero === false ? 0 : 1);
+  return step && Number.isFinite(each) && Number.isFinite(up) ? Math.min(each, choices - 1) : 0;
 }

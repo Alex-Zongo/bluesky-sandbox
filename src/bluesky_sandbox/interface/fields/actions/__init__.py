@@ -51,6 +51,7 @@ from .mask import (
 from .route import (
     ActiveRouteWaypointAltDeltaFt,
     ActiveRouteWaypointHdgDeltaDeg,
+    DirectToWaypoint,
     ActiveRouteWaypointSpdDeltaCrossover,
     ActiveRouteWaypointSpdDeltaKts,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "AltDeltaM",
     "ApAltDeltaM",
     "ActiveRouteWaypointHdgDeltaDeg",
+    "DirectToWaypoint",
     "ActiveRouteWaypointAltDeltaFt",
     "ActiveRouteWaypointSpdDeltaKts",
     "ActiveRouteWaypointSpdDeltaCrossover",

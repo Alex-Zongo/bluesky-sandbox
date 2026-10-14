@@ -524,6 +524,11 @@ class StepNormalizer(Normalizer):
     the choices. Leave it out for a clearance: a call that changes nothing
     says nothing.
 
+    ``steps_up``: how many steps up, where that differs from down - ``0`` for
+    a clearance that only ever lowers, such as a speed reduction:
+    ``StepNormalizer(steps_each_way=2, steps_up=0, include_zero=False)`` is -2
+    and -1. ``None`` (default): ``steps_each_way``.
+
     ON A GRID - an action with a :class:`~bluesky_sandbox.interface.fields.grid.Grid`
     - the steps are the grid's, and ``step`` COUNTS them: a whole number of
     grid steps per choice, 1 when left unset. On ``Grid(1000)``
@@ -557,6 +562,7 @@ class StepNormalizer(Normalizer):
         ] = None,
         steps_each_way: int = 10,
         *,
+        steps_up: int | None = None,
         include_zero: bool = True,
     ) -> None:
         if step is not None and not float(step) > 0.0:
@@ -566,9 +572,16 @@ class StepNormalizer(Normalizer):
                 "StepNormalizer steps_each_way must be a whole number >= 1, got "
                 f"{steps_each_way!r}"
             )
+        if steps_up is not None and (int(steps_up) != steps_up or steps_up < 0):
+            raise ValueError(
+                f"StepNormalizer steps_up must be a whole number >= 0, got {steps_up!r}"
+            )
         self.step = None if step is None else float(step)
         self.steps_each_way = int(steps_each_way)
+        self.steps_up = self.steps_each_way if steps_up is None else int(steps_up)
         self.include_zero = bool(include_zero)
+        if not self.steps():
+            raise ValueError("StepNormalizer has no choice: give it a step down or up.")
 
     def grid_for(self, field: Any = None) -> tuple[Grid, int]:
         """The grid the steps are on, and how many of its steps one choice
@@ -599,8 +612,11 @@ class StepNormalizer(Normalizer):
 
     def steps(self) -> list[int]:
         """Each choice's number of steps ``k``, in index order."""
-        n = self.steps_each_way
-        return [k for k in range(-n, n + 1) if self.include_zero or k != 0]
+        return [
+            k
+            for k in range(-self.steps_each_way, self.steps_up + 1)
+            if self.include_zero or k != 0
+        ]
 
     @property
     def n_choices(self) -> int:
