@@ -29,27 +29,12 @@ from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 
 _QUERYABLES = {
-    "merge": Waypoint(
-        lat=52.0,
-        lon=4.8,
-        alt_ft=9000,
-        speed_kts=250,
-        reach_radius_nm=8.0,
-        alt_tolerance_ft=800,
-        speed_tolerance_kts=15,
-        track_temporal_state=True,
-    ),
-    "exit": Waypoint(lat=52.3, lon=5.3, alt_ft=12000, reach_radius_nm=None),
-    "gate": Waypoint(
-        lat=52.1,
-        lon=5.0,
-        speed_kts=240,
-        speed_tolerance_kts=10,
-        speed_tolerance_mach=0.02,
-        track_temporal_state=True,
-    ),
-    # A tolerance with no altitude to hold it to: satisfied on position alone.
-    "wide": Waypoint(lat=52.0, lon=4.6, reach_radius_nm=40.0, alt_tolerance_ft=500),
+    "merge": Waypoint(lat=52.0, lon=4.8, reach_radius_nm=8.0, track_temporal_state=True),
+    "exit": Waypoint(lat=52.3, lon=5.3, reach_radius_nm=None),
+    # On no design route: reached only by a route given straight to BlueSky.
+    "gate": Waypoint(lat=52.1, lon=5.0, track_temporal_state=True),
+    # On no route at all: satisfied on position alone.
+    "wide": Waypoint(lat=52.0, lon=4.6, reach_radius_nm=40.0),
     "sector": QueryRegion(
         bounds=RegionBounds(
             BoxFootprint(51.85, 52.15, 4.4, 5.0), ConstantAltitudeBand(7000, 11000)
@@ -68,7 +53,17 @@ class _Scenario:
         self.spawn = SpawnConfig(
             regions=[
                 SpawnRegion(
-                    bounds=box, n_aircraft=8, params=params, route=["merge", "exit"]
+                    bounds=box,
+                    n_aircraft=8,
+                    params=params,
+                    route=[
+                        {
+                            "waypoint": "merge",
+                            "alt_ft": 9000, "alt_below_ft": 800, "alt_above_ft": 800,
+                            "speed_kts": 250, "speed_below_kts": 15, "speed_above_kts": 15,
+                        },
+                        {"waypoint": "exit", "alt_ft": 12000},
+                    ],
                 ),
                 SpawnRegion(bounds=box, n_aircraft=6, params=params),
             ],

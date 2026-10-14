@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import NamedTuple, TypeAlias
 
-from bluesky_sandbox.sim.queryables import WaypointTarget
+from bluesky_sandbox.sim.fixes import RouteFix
 
 Callsign: TypeAlias = str
 
@@ -64,14 +64,6 @@ class SpawnQueueItem:
     request: object | None = None
 
 
-class ResolvedRoute(NamedTuple):
-    names: list[str]
-    targets: list[WaypointTarget]
-    #: Each step's arrival-time slack, seconds or a distribution of them;
-    #: ``None`` for a step with no target arrival time.
-    arrival_slacks: tuple = ()
-
-
 class AircraftControlState(Enum):
     CONTROLLED = "controlled"
     BACKGROUND = "background"
@@ -99,8 +91,8 @@ class SpawnRecord(NamedTuple):
     controlled: bool
     region_index: int
     route: tuple[str, ...] | None
-    #: The route's waypoints as resolved for this aircraft, constraints and all.
-    targets: tuple[WaypointTarget, ...] = ()
+    #: The route's fixes as resolved for this aircraft, crossings and all.
+    fixes: tuple[RouteFix, ...] = ()
     #: The spawn source that planned it, by name (or index), if one did.
     source: str | None = None
 

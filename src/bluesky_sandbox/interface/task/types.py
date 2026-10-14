@@ -251,11 +251,14 @@ class WaypointReadoutKey(StrEnum):
     TARGET_ALT_FT = "target_alt_ft"
     TARGET_SPEED_KTS = "target_speed_kts"
     RADIUS_NM = "radius_nm"
-    ALT_TOLERANCE_FT = "alt_tolerance_ft"
+    # A window about its value: how far below / above it reaches.
+    ALT_BELOW_FT = "alt_below_ft"
+    ALT_ABOVE_FT = "alt_above_ft"
     SPEED_KTS = "speed_kts"
     SPEED_MIN_KTS = "speed_min_kts"
     SPEED_MAX_KTS = "speed_max_kts"
-    SPEED_TOLERANCE_KTS = "speed_tolerance_kts"
+    SPEED_BELOW_KTS = "speed_below_kts"
+    SPEED_ABOVE_KTS = "speed_above_kts"
     GOAL_TYPE = "goal_type"
 
 

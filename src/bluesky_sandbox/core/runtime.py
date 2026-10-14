@@ -16,7 +16,7 @@ from bluesky_sandbox.sim.geometry.conflict import (
     bluesky_asas_dt_s,
     invalidate_conflict_geometry,
 )
-from bluesky_sandbox.sim.queryables import WaypointTarget
+from bluesky_sandbox.sim.fixes import RouteFix
 from bluesky_sandbox.sim.weather import WindField
 
 # BlueSky is a process-global singleton: ``bs.init`` re-imports the plugins and
@@ -239,7 +239,7 @@ class BlueSkyRuntime:
     def append_aircraft_route(
         self,
         callsign: str,
-        route: Sequence[WaypointTarget] | None,
+        route: Sequence[RouteFix] | None,
         commit: bool = True,
     ) -> None:
         self._stack_aircraft_route(callsign, route)
@@ -249,7 +249,7 @@ class BlueSkyRuntime:
     def replace_aircraft_route(
         self,
         callsign: str,
-        route: Sequence[WaypointTarget] | None,
+        route: Sequence[RouteFix] | None,
         commit: bool = True,
     ) -> None:
         bs.stack.stack(f"DELRTE {callsign}")
@@ -260,28 +260,22 @@ class BlueSkyRuntime:
     def _stack_aircraft_route(
         self,
         callsign: str,
-        route: Sequence[WaypointTarget] | None,
+        route: Sequence[RouteFix] | None,
     ) -> None:
         if not route:
             return
 
-        for target in route:
+        for fix in route:
             waypoint_ref = (
-                f"{target.lat:.8f},{target.lon:.8f}"
-                if target.waypoint is None
-                else target.waypoint
+                f"{fix.lat:.8f},{fix.lon:.8f}" if fix.waypoint is None else fix.waypoint
             )
+            crossing = fix.crossing
             # BlueSky adds each waypoint in the route's current mode: switch
             # to fly-over for this one, and back to fly-by after it.
-            if target.flyover:
+            if crossing.flyover:
                 bs.stack.stack(f"ADDWPT {callsign} FLYOVER")
-            self._stack_addwpt(
-                callsign,
-                waypoint_ref,
-                target.alt_ft,
-                target.speed_kts,
-            )
-            if target.flyover:
+            self._stack_addwpt(callsign, waypoint_ref, crossing.alt_ft, crossing.speed_kts)
+            if crossing.flyover:
                 bs.stack.stack(f"ADDWPT {callsign} FLYBY")
 
     def _stack_addwpt(
@@ -292,31 +286,35 @@ class BlueSkyRuntime:
         speed_kts: float | None,
     ) -> None:
         if speed_kts is not None:
-            if alt_ft is None:
-                raise ValueError(
-                    "BlueSky route speed constraints require alt_ft. "
-                    f"Got speed_kts={speed_kts!r} for waypoint {waypoint_ref!r}."
-                )
-            bs.stack.stack(
-                f"ADDWPT {callsign} {waypoint_ref},{alt_ft:.1f},{speed_kts:.1f}"
-            )
+            # A speed with no altitude is BlueSky's ``wp,,spd``: flown from the
+            # fix on, changed in time to cross it at it.
+            alt = "" if alt_ft is None else f"{alt_ft:.1f}"
+            bs.stack.stack(f"ADDWPT {callsign} {waypoint_ref},{alt},{speed_kts:.1f}")
         elif alt_ft is not None:
             bs.stack.stack(f"ADDWPT {callsign} {waypoint_ref},{alt_ft:.1f}")
         else:
             bs.stack.stack(f"ADDWPT {callsign} {waypoint_ref}")
 
-    def set_arrival_times(
-        self, callsign: str, times: Sequence[float | None], commit: bool = True
-    ) -> None:
-        """Give each fix of ``callsign``'s route its time as a BlueSky RTA, in
-        route order; ``None`` leaves a fix without one."""
+    def set_rtas(self, callsign: str, fixes: Sequence[RouteFix]) -> None:
+        """Hand ``callsign``'s FMS the arrival times its route's crossings ask
+        it to fly (``rta``) as BlueSky RTAs, by route position.
+
+        As BlueSky's ``RTA`` command does - which finds its fix by name, the
+        first of that name - each time is set on the route, then its active
+        leg recomputed, once for them all."""
         idx = self.index(callsign)
-        names = bs.traf.ap.route[idx].wpname
-        for name, time in zip(names, times):
-            if time is not None:
-                bs.stack.stack(f"RTA {callsign} {name} {float(time):.3f}")
-        if commit:
-            simstack.process()
+        route = bs.traf.ap.route[idx]
+        timed = [
+            (k, fix.due_s)
+            for k, fix in enumerate(fixes)
+            if fix.crossing.rta and fix.due_s is not None and k < len(route.wprta)
+        ]
+        if not timed:
+            return
+        for k, due_s in timed:
+            route.wprta[k] = float(due_s)
+        if 0 <= int(route.iactwp) < route.nwp:
+            route.direct(idx, route.wpname[route.iactwp])
 
     def delete_aircraft(self, acid: str) -> None:
         if acid in bs.traf.id:

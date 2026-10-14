@@ -26,8 +26,10 @@ export type WaypointShape = {
   alt_ft?: number;
   speed_kts?: number;
   reach_radius_nm?: number;
-  alt_tolerance_ft?: number;
-  speed_tolerance_kts?: number;
+  alt_below_ft?: number;
+  alt_above_ft?: number;
+  speed_below_kts?: number;
+  speed_above_kts?: number;
 };
 export type WaypointFace = Face & WaypointShape;
 export type WaypointEdge = Edge & WaypointShape;
@@ -63,7 +65,14 @@ export type RoutePath = {
   // Per point: whether its height is inferred - a fix with no altitude of
   // its own, placed between the fixes that have one (see routeHeights).
   inferred: boolean[];
+  // Per point: the altitude window its step crosses the fix in, ft - null
+  // where it states none (see stepWindow).
+  windows: (CrossingWindow | null)[];
 };
+
+// Where a route step lets an aircraft cross its fix: from lo to hi ft, a side
+// with no limit open; a range drawn each episode is its whole span.
+export type CrossingWindow = { lo: number; hi: number; openBelow: boolean; openAbove: boolean; text: string };
 
 // View-only visibility: which element categories are shown, and which individual
 // elements have been hidden (by element key) from the map without touching the spec.

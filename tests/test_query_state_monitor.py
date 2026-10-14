@@ -37,16 +37,7 @@ def _queryables():
             ),
             track_temporal_state=True,
         ),
-        _WAYPOINT: Waypoint(
-            lat=52.0,
-            lon=4.62,
-            alt_ft=8_300,
-            reach_radius_nm=1.5,
-            alt_tolerance_ft=300,
-            speed_kts=250,
-            speed_tolerance_kts=15,
-            track_temporal_state=True,
-        ),
+        _WAYPOINT: Waypoint(lat=52.0, lon=4.62, reach_radius_nm=1.5, track_temporal_state=True),
     }
 
 
@@ -59,7 +50,11 @@ class _Scenario:
                     bounds=RegionBounds(BoxFootprint(51.95, 52.05, 4.5, 4.62)),
                     n_aircraft=10,
                     params={"alt_ft": (8_000, 8_600), "spd_kts": (230, 270)},
-                    route=[_WAYPOINT],
+                    route=[{
+                        "waypoint": _WAYPOINT,
+                        "alt_ft": 8_300, "alt_below_ft": 300, "alt_above_ft": 300,
+                        "speed_kts": 250, "speed_below_kts": 15, "speed_above_kts": 15,
+                    }],
                 )
             ],
             aircraft_type="B744",

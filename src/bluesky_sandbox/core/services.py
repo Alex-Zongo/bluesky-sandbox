@@ -36,7 +36,7 @@ from bluesky_sandbox.interface.task.types import (
 )
 from bluesky_sandbox.interface.wrappers.observations.normalizer import Normalizer
 from bluesky_sandbox.sim.bounds import contains_many
-from bluesky_sandbox.sim.performance.speeds import within_speed_tolerance_many
+from bluesky_sandbox.sim.performance.speeds import within_speed_window_many
 from bluesky_sandbox.sim.queryables import (
     QueryRegion,
     RegionCurrent,
@@ -46,6 +46,7 @@ from bluesky_sandbox.sim.queryables import (
     WaypointResult,
     WaypointStep,
 )
+from bluesky_sandbox.sim.fixes import ROUTES, fix_at, in_window
 from bluesky_sandbox.sim.spawn import param_alt_range
 from bluesky_sandbox.ui.display.overlays import BoundsResource, Renderable
 
@@ -679,6 +680,43 @@ def _row_at(table: AircraftTable, env, acidx: int) -> int | None:
     return table.row.get(int(uids[acidx]))
 
 
+_FIX_NUMBERS = ("alt_ft", "speed_kts", "alt_below_ft", "alt_above_ft", "speed_below_kts", "speed_above_kts")
+
+
+def waypoint_fix_arrays(
+    queryable: Waypoint, indices: np.ndarray, route_indices
+) -> dict[str, np.ndarray]:
+    """Each of aircraft ``indices``' fix at ``queryable``, as arrays: its
+    route's fix at its ``route_indices`` entry (-1 or ``None``: not on its
+    route) - or, for a route the sandbox did not make, the one BlueSky's route
+    has there - else the waypoint's place with no crossing (NaN)."""
+    n = len(indices)
+    out = {
+        "lat": np.full(n, float(queryable.lat)),
+        "lon": np.full(n, float(queryable.lon)),
+        **{key: np.full(n, math.nan) for key in _FIX_NUMBERS},
+    }
+    for k, (acidx, route_idx) in enumerate(zip(indices, route_indices, strict=True)):
+        acidx = int(acidx)
+        if route_idx is None or route_idx < 0:
+            # A route the sandbox made names every fix it has; any other is
+            # searched for this one.
+            if ROUTES.route(acidx) is not None:
+                continue
+            route_idx = queryable._route_index(acidx)
+            if route_idx is None:
+                continue
+        fix = fix_at(acidx, int(route_idx))
+        if fix is None:
+            continue
+        out["lat"][k], out["lon"][k] = fix.lat, fix.lon
+        for key in _FIX_NUMBERS:
+            value = getattr(fix.crossing, key)
+            if value is not None:
+                out[key][k] = value
+    return out
+
+
 class QueryStateMonitor:
     """Track built-in queryable event state across simulator substeps.
 
@@ -705,15 +743,18 @@ class QueryStateMonitor:
             },
             keyed_columns=True,
         )
-        # Per-step route-target cache for substep dwell tracking:
-        # name -> ((aircraft ids, route-index bytes), target arrays).
+        # Per-step route-fix cache for substep dwell tracking:
+        # name -> ((aircraft ids, route-index bytes), fix arrays).
         self._waypoint_target_cache: dict[str, tuple[tuple, tuple]] = {}
+        # A fix a route passes more than once: acid -> {name: its positions}.
+        self._repeats: dict[str, dict[str, tuple[int, ...]]] = {}
 
     def bind_env(self, env) -> None:
         self.env = env
 
     def clear(self) -> None:
         self._table.clear()
+        self._repeats.clear()
         self.begin_step()
 
     def set_aircraft_route(
@@ -721,8 +762,11 @@ class QueryStateMonitor:
         acid: str,
         route_names: SequenceABC[str] | None,
     ) -> None:
-        """Remember which BlueSky route index corresponds to each query name."""
+        """Remember which BlueSky route index corresponds to each query name:
+        its first; a fix the route passes again moves on to the next once
+        passed (:meth:`begin_step`)."""
         self._sync_layout()
+        self._repeats.pop(acid, None)
         row = self._row_of(acid)
         if row is None:
             return
@@ -730,12 +774,35 @@ class QueryStateMonitor:
         route_index[row, :] = -1
         if not route_names:
             return
+        positions: dict[str, list[int]] = {}
         for index, name in enumerate(route_names):
+            positions.setdefault(name, []).append(index)
             col = self._table.col.get(name)
             if col is not None and route_index[row, col] < 0:
                 route_index[row, col] = index
+        repeats = {
+            name: tuple(at)
+            for name, at in positions.items()
+            if len(at) > 1 and name in self._table.col
+        }
+        if repeats:
+            self._repeats[acid] = repeats
+
+    def _advance_repeats(self) -> None:
+        """Point each repeated fix at its occurrence still ahead - the one being
+        flown to or later - once the one before is passed."""
+        for acid, repeats in self._repeats.items():
+            row = self._row_of(acid)
+            if row is None:
+                continue
+            active = int(bs.traf.ap.route[bs.traf.id.index(acid)].iactwp)
+            route_index = self._table["route_index"]
+            for name, at in repeats.items():
+                ahead = [k for k in at if k >= active]
+                route_index[row, self._table.col[name]] = ahead[0] if ahead else at[-1]
 
     def clear_aircraft_route(self, acid: str) -> None:
+        self._repeats.pop(acid, None)
         row = self._row_of(acid)
         if row is not None:
             self._table["route_index"][row, :] = -1
@@ -764,6 +831,7 @@ class QueryStateMonitor:
             if bool(getattr(queryable, "track_temporal_state", False))
         )
         self._table.reset_step()
+        self._advance_repeats()
         # Route targets may be edited by this step's actions (dispatched after
         # begin_step, before the substep loop) - rebuild lazily per step.
         self._waypoint_target_cache.clear()
@@ -877,52 +945,22 @@ class QueryStateMonitor:
         queryable: Waypoint,
         route_indices: np.ndarray,
         n: int,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Per-aircraft ``(lat, lon, alt_ft, speed_kts)`` target arrays, cached.
+    ) -> dict[str, np.ndarray]:
+        """Each aircraft's fix at this waypoint, as arrays - ``lat``, ``lon`` and
+        the crossing's ``alt_ft``, ``speed_kts`` and window sides, NaN where
+        unset - cached for the step (:func:`waypoint_fix_arrays`).
 
-        Route waypoint data only changes between env steps (actions dispatch
-        before the substep loop; waypoint *passage* moves ``iactwp`` but not the
-        stored waypoint), so the per-aircraft route-target resolution is cached
-        for the step and invalidated in :meth:`begin_step`. The key also carries
-        the aircraft-id tuple and the route-index column, so mid-step spawns or
-        route re-indexing rebuild it.
+        A route's fixes only change between env steps (actions dispatch before
+        the substep loop; passing a fix moves ``iactwp``, not the fix), so the
+        cache is dropped in :meth:`begin_step`. Its key also carries the
+        aircraft ids and the route-index column, so mid-step spawns or route
+        changes rebuild it.
         """
         key = (self._table.ids, route_indices.tobytes())
         cached = self._waypoint_target_cache.get(name)
         if cached is not None and cached[0] == key:
             return cached[1]
-
-        target = queryable.target
-        target_lat = np.full(n, target.lat, dtype=np.float64)
-        target_lon = np.full(n, target.lon, dtype=np.float64)
-        target_alt_ft = np.full(
-            n,
-            math.nan if target.alt_ft is None else target.alt_ft,
-            dtype=np.float64,
-        )
-        target_speed_kts = np.full(
-            n,
-            math.nan if target.speed_kts is None else target.speed_kts,
-            dtype=np.float64,
-        )
-        route_rows = np.flatnonzero(route_indices >= 0)
-        for acidx in route_rows:
-            try:
-                route_target = queryable.target_from_route(
-                    int(acidx),
-                    int(route_indices[acidx]),
-                )
-            except (IndexError, TypeError, ValueError):
-                continue
-            target_lat[acidx] = route_target.lat
-            target_lon[acidx] = route_target.lon
-            target_alt_ft[acidx] = (
-                math.nan if route_target.alt_ft is None else route_target.alt_ft
-            )
-            target_speed_kts[acidx] = (
-                math.nan if route_target.speed_kts is None else route_target.speed_kts
-            )
-        arrays = (target_lat, target_lon, target_alt_ft, target_speed_kts)
+        arrays = waypoint_fix_arrays(queryable, np.arange(n), route_indices[:n])
         self._waypoint_target_cache[name] = (key, arrays)
         return arrays
 
@@ -936,41 +974,21 @@ class QueryStateMonitor:
         alt_ft: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         n = lat_deg.size
-        target = queryable.target
-        (
-            target_lat,
-            target_lon,
-            target_alt_ft,
-            target_speed_kts,
-        ) = self._waypoint_target_arrays(name, queryable, route_indices, n)
-
-        _qdr_deg, distance_nm = qdrdist(lat_deg, lon_deg, target_lat, target_lon)
-        alt_diff_ft = alt_ft - target_alt_ft
+        fix = self._waypoint_target_arrays(name, queryable, route_indices, n)
+        _qdr_deg, distance_nm = qdrdist(lat_deg, lon_deg, fix["lat"], fix["lon"])
+        alt_diff_ft = alt_ft - fix["alt_ft"]
         within_lateral = (
             np.ones(n, dtype=bool)
-            if target.reach_radius_nm is None
-            else distance_nm <= target.reach_radius_nm
+            if queryable.reach_radius_nm is None
+            else distance_nm <= queryable.reach_radius_nm
         )
-        within_altitude = (
-            np.ones(n, dtype=bool)
-            if target.alt_tolerance_ft is None
-            else np.isnan(target_alt_ft)
-            | (np.abs(alt_diff_ft) <= target.alt_tolerance_ft)
+        # Each aircraft against its own crossing's window (NaN: unconstrained),
+        # speed regime-aware (Mach above the CAS/Mach crossover, CAS below) via
+        # the shared helper, so the dwell-tracking mask agrees with current_state.
+        within_altitude = in_window(alt_ft, fix["alt_ft"], fix["alt_below_ft"], fix["alt_above_ft"])
+        within_speed = within_speed_window_many(
+            n, fix["speed_kts"] * kts, fix["speed_below_kts"], fix["speed_above_kts"]
         )
-        # Speed constraint per aircraft, regime-aware (Mach above the CAS/Mach
-        # crossover, CAS below) via the shared helper, so the dwell-tracking mask
-        # agrees with current_state and stays well-defined for any sampled target.
-        within_speed = np.ones(n, dtype=bool)
-        if (
-            target.speed_tolerance_kts is not None
-            or target.speed_tolerance_mach is not None
-        ):
-            within_speed = within_speed_tolerance_many(
-                n,
-                target_speed_kts * kts,
-                target.speed_tolerance_kts,
-                target.speed_tolerance_mach,
-            )
         return (
             np.asarray(distance_nm, dtype=np.float64),
             np.asarray(alt_diff_ft, dtype=np.float64),
@@ -986,11 +1004,7 @@ class QueryStateMonitor:
         track_temporal_state = bool(getattr(queryable, "track_temporal_state", False))
         if isinstance(queryable, Waypoint) and not track_temporal_state:
             route_idx = self._route_index(acidx, name)
-            target = (
-                queryable.target_from_route(acidx, route_idx)
-                if route_idx is not None
-                else queryable.target
-            )
+            target = queryable.fix_for(acidx, route_idx)
             return WaypointResult.for_aircraft(
                 queryable,
                 acidx,
@@ -1031,11 +1045,7 @@ class QueryStateMonitor:
         row = _row_at(table, self.env, acidx)
         col = table.col.get(name)
         route_idx = self._route_index(acidx, name)
-        target = (
-            queryable.target_from_route(acidx, route_idx)
-            if route_idx is not None
-            else queryable.target
-        )
+        target = queryable.fix_for(acidx, route_idx)
         current = queryable.current_state(acidx, target)
         route = queryable.route_state(acidx, route_idx)
         satisfied = self._event(
@@ -1222,10 +1232,10 @@ class QueryBatch:
         group = path.split(".", 1)[0]
         if group == "current":
             self._waypoint_current()
-            return self._values[path]
+            return self._values[path] if path in self._values else self._fallback(path)
         if group == "route":
             self._waypoint_route()
-            return self._values[path]
+            return self._values[path] if path in self._values else self._fallback(path)
         if path == "step.satisfied":
             if not self._tracked:
                 return np.zeros(self.indices.size, dtype=np.float64)
@@ -1242,53 +1252,36 @@ class QueryBatch:
 
     def _waypoint_current(self) -> None:
         """Every ``current.*`` array, as :meth:`Waypoint.current_state` computes
-        each field: against the route's copy of the fix when the monitor knows
-        where it sits in the route, else the configured target."""
+        each field: against each aircraft's own fix at the waypoint."""
         queryable, idx = self._queryable, self.indices
         n = idx.size
-        target = queryable.target
-        lat = np.full(n, float(target.lat))
-        lon = np.full(n, float(target.lon))
-        alt_ft = np.full(n, np.nan if target.alt_ft is None else target.alt_ft)
-        speed_kts = np.full(n, np.nan if target.speed_kts is None else target.speed_kts)
-        for k, route_idx in enumerate(self._route_index_of()):
-            if route_idx is None:
-                continue
-            routed = queryable.target_from_route(int(idx[k]), route_idx)
-            lat[k], lon[k] = routed.lat, routed.lon
-            alt_ft[k] = np.nan if routed.alt_ft is None else routed.alt_ft
-            speed_kts[k] = np.nan if routed.speed_kts is None else routed.speed_kts
+        fix = waypoint_fix_arrays(queryable, idx, self._route_index_of())
 
         traf_lat = np.asarray(bs.traf.lat, dtype=np.float64)[idx]
         traf_lon = np.asarray(bs.traf.lon, dtype=np.float64)[idx]
-        qdr, dist = qdrdist(traf_lat, traf_lon, lat, lon)
+        qdr, dist = qdrdist(traf_lat, traf_lon, fix["lat"], fix["lon"])
         qdr = np.asarray(qdr, dtype=np.float64)
         dist = np.asarray(dist, dtype=np.float64)
-        alt_diff = np.asarray(bs.traf.alt, dtype=np.float64)[idx] / ft - alt_ft
+        own_alt_ft = np.asarray(bs.traf.alt, dtype=np.float64)[idx] / ft
+        alt_diff = own_alt_ft - fix["alt_ft"]
         track_error = (qdr - np.asarray(bs.traf.trk, dtype=np.float64)[idx] + 540.0) % (
             360.0
         ) - 180.0
 
         within_lateral = (
             np.ones(n, dtype=bool)
-            if target.reach_radius_nm is None
-            else dist <= target.reach_radius_nm
+            if queryable.reach_radius_nm is None
+            else dist <= queryable.reach_radius_nm
         )
-        within_altitude = (
-            np.ones(n, dtype=bool)
-            if target.alt_tolerance_ft is None
-            else np.isnan(alt_ft) | (np.abs(alt_diff) <= target.alt_tolerance_ft)
-        )
-        # The vectorized tolerance reads the first ``ntraf`` rows: give it a
-        # target for the asked-for aircraft and "unconstrained" everywhere else.
+        within_altitude = in_window(own_alt_ft, fix["alt_ft"], fix["alt_below_ft"], fix["alt_above_ft"])
+        # The vectorized window reads the first ``ntraf`` rows: give it each
+        # asked-for aircraft's fix and "unconstrained" everywhere else.
         ntraf = int(bs.traf.ntraf)
-        target_cas_ms = np.full(ntraf, np.nan)
-        target_cas_ms[idx] = speed_kts * kts
-        within_speed = within_speed_tolerance_many(
-            ntraf,
-            target_cas_ms,
-            target.speed_tolerance_kts,
-            target.speed_tolerance_mach,
+        rows = {key: np.full(ntraf, np.nan) for key in ("speed_kts", "speed_below_kts", "speed_above_kts")}
+        for key, row in rows.items():
+            row[idx] = fix[key]
+        within_speed = within_speed_window_many(
+            ntraf, rows["speed_kts"] * kts, rows["speed_below_kts"], rows["speed_above_kts"]
         )[idx]
         satisfied = within_lateral & within_altitude & within_speed
 

@@ -35,7 +35,7 @@ from typing import NamedTuple
 
 import bluesky as bs
 
-from bluesky_sandbox.sim.spawn import DEFAULT_ROUTE_COLORS, expand_route_paths, route_colors
+from bluesky_sandbox.sim.spawn import DEFAULT_ROUTE_COLORS, expand_route_step_paths, route_colors, route_step_name
 from bluesky_sandbox.sim.spawn.regions import param_alt_range
 
 from .common import DISPLAY_TOGGLES, DisplayToggle, PrimitiveDrawMixin, TrailMixin
@@ -354,16 +354,25 @@ class HumanSimDriver(TrailMixin, PrimitiveDrawMixin, SimDriver):
         transitions) one per branch, so the whole network draws - as its fixes'
         :class:`RoutePoint`."""
         try:
-            paths = expand_route_paths(spec, routes_lib)
+            paths = expand_route_step_paths(spec, routes_lib)
         except Exception:
             return []
         out = []
-        for names in paths:
-            fixes = [(name, queryables.get(name)) for name in names]
-            fixes = [(n, wp) for n, wp in fixes if getattr(wp, "lat", None) is not None and getattr(wp, "lon", None) is not None]
-            at = [(float(wp.lat), float(wp.lon)) for _, wp in fixes]
-            heights, inferred = route_heights(at, [getattr(wp, "alt_ft", None) for _, wp in fixes])
-            labels = [n if getattr(wp, "render_label", True) else None for n, wp in fixes]
+        for steps in paths:
+            fixes = [(route_step_name(step), queryables.get(route_step_name(step)), step) for step in steps]
+            fixes = [
+                (n, wp, step)
+                for n, wp, step in fixes
+                if getattr(wp, "lat", None) is not None and getattr(wp, "lon", None) is not None
+            ]
+            at = [(float(wp.lat), float(wp.lon)) for _, wp, _ in fixes]
+            # Each fix at the altitude its step states there, where a number.
+            stated = [
+                step.get("alt_ft") if isinstance(step, dict) and isinstance(step.get("alt_ft"), (int, float)) else None
+                for _, _, step in fixes
+            ]
+            heights, inferred = route_heights(at, stated)
+            labels = [n if getattr(wp, "render_label", True) else None for n, wp, _ in fixes]
             out.append([RoutePoint(lat, lon, h, f, n) for (lat, lon), h, f, n in zip(at, heights, inferred, labels, strict=True)])
         return out
 

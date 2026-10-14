@@ -161,6 +161,18 @@ validate and preview against the backend live.
     Build a shared `approach` segment once and reuse it across `arrival`s; the
     step picker offers both waypoints and subroutes, and rename/delete cascade
     through references.
+  - **Crossings on route steps** — a waypoint is a place, with a reach radius;
+    how a route crosses it is the step's: altitude and speed (each a number, a
+    range, `envelope` or - altitude - `start`) with a window about each,
+    fly-over, an arrival slack and whether BlueSky meets it as an RTA. Edit it
+    from a step's ⚙ on its route chip, or with the step selected in the Route
+    tab, where each node shows its crossing in a line. Two routes may cross one
+    fix differently; `context.query("fix").target` is this aircraft's crossing
+    there. A sampled waypoint's region gives only its place: an altitude drawn
+    each episode is a range on the step, and an envelope altitude's lowest
+    draw is the step's `envelope_alt_floor_ft`. On the map a waypoint sits on
+    the ground, with a stem up to each route's height there and the route's
+    window as a band on it - an open side fading past its end.
   - **Per-aircraft sampled waypoints** — a sampled waypoint's "sample" can be
     *per episode* (one shared position drawn each reset) or *per aircraft* (each
     aircraft draws its **own** target from the region at spawn). A per-aircraft

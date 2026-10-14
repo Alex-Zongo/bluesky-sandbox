@@ -32,8 +32,8 @@ import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts, nm
 
-from bluesky_sandbox.interface.fields._state import set_arrival_times
 from bluesky_sandbox.sim.arrival import arrival_times
+from bluesky_sandbox.sim.fixes import ROUTES, Crossing, ResolvedRoute, RouteFix
 from bluesky_sandbox.sim.geometry.clearance import (
     inside_separation_zone,
     predicted_conflict,
@@ -44,16 +44,15 @@ from bluesky_sandbox.sim.performance.envelope import (
     feasible_cas_at_alt,
     reachable_alt_window,
 )
-from bluesky_sandbox.sim.queryables import Waypoint, WaypointTarget
+from bluesky_sandbox.sim.queryables import Waypoint
 from bluesky_sandbox.sim.sampling.distributions import Categorical
-from bluesky_sandbox.sim.spawn import PlanContext, SpawnRequest, route_heading, route_step_name
+from bluesky_sandbox.sim.spawn import PlanContext, SpawnRequest, draw_crossings, route_heading, route_step_name
 from bluesky_sandbox.sim.spawn.heading import is_toward_route
 from bluesky_sandbox.sim.spawn.regions import _ENVELOPE_PROVISIONAL_SPD_KTS
 
 from .state import (
     AircraftControlState,
     Callsign,
-    ResolvedRoute,
     SpawnPosition,
     SpawnQueueItem,
     SpawnRecord,
@@ -310,7 +309,7 @@ class SpawnGenerator:
         route: Sequence[Any] | None,
         rng: np.random.Generator,
     ) -> ResolvedRoute | None:
-        """Resolve a route spec into concrete waypoint targets.
+        """Resolve a route spec into this aircraft's fixes.
 
         Public because route resolution is not only a spawn-time concern: the
         environment's ``replace_aircraft_route`` re-resolves an existing
@@ -499,14 +498,15 @@ class SpawnGenerator:
             )
         return None
 
-    def _resolve_route_target_for_aircraft(
+    def _resolve_fix_for_aircraft(
         self,
         callsign: str,
         step,
         rng: np.random.Generator,
         from_state: tuple[float, float, float | None] | None = None,
-    ) -> WaypointTarget:
-        """Resolve one route step into the concrete target sent to BlueSky.
+    ) -> RouteFix:
+        """Resolve one route step into this aircraft's fix: the waypoint's
+        place - or a point sampled for it - crossed as the step states.
 
         ``from_state`` is the ``(lat, lon, alt_ft)`` the aircraft starts this leg
         from - ``None`` (the spawn state) for the first leg, the previous
@@ -517,7 +517,7 @@ class SpawnGenerator:
             queryable = self.env.episode_queryables[step]
             if not isinstance(queryable, Waypoint):
                 raise TypeError(f"route step {step!r} does not reference a Waypoint")
-            return queryable.target
+            return RouteFix(lat=float(queryable.lat), lon=float(queryable.lon), waypoint=queryable.waypoint)
         if not isinstance(step, dict) or "waypoint" not in step:
             raise TypeError(f"route step must be a waypoint name or dict, got {step!r}")
 
@@ -527,34 +527,28 @@ class SpawnGenerator:
                 f"route step {step!r} does not reference a Waypoint queryable"
             )
 
-        target = queryable.target
+        # A crossing range not drawn for the episode (a spawn config used
+        # without its scenario) is drawn for this aircraft.
+        step = draw_crossings([step], rng)[0]
         sample_bounds = step.get("sample")
         sample_alt_from_envelope = bool(step.get("sample_alt_from_envelope", False))
         sample_speed_from_envelope = bool(step.get("sample_speed_from_envelope", False))
         reachable_from_spawn = bool(step.get("reachable_from_spawn", False))
-        lat = target.lat
-        lon = target.lon
-        alt = step.get("alt_ft", target.alt_ft)
-        speed = step.get("speed_kts", target.speed_kts)
-        region_alt_lo = region_alt_hi = None
+        lat = float(queryable.lat)
+        lon = float(queryable.lon)
+        alt = step.get("alt_ft")
+        speed = step.get("speed_kts")
 
         if sample_bounds is not None:
             lat, lon = sample_bounds.sample_point(rng)
-            band = getattr(sample_bounds, "alt_band_at", None)
-            if band is not None:
-                lo, hi = band(lat, lon)
-                if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-                    region_alt_lo, region_alt_hi = lo, hi
-                    if not sample_alt_from_envelope and alt is not None:
-                        alt = float(rng.uniform(lo, hi))
 
         if sample_alt_from_envelope or sample_speed_from_envelope:
             acidx = self.env._runtime.index(callsign)
-            alt_min_ft, alt_max_ft = region_alt_lo, region_alt_hi
+            alt_min_ft = alt_max_ft = None
             if reachable_from_spawn:
                 vs_fraction = float(step.get("reachable_vs_fraction", 1.0))
                 from_lat, from_lon, from_alt_ft = from_state or (None, None, None)
-                reach_lo, reach_hi = reachable_alt_window(
+                alt_min_ft, alt_max_ft = reachable_alt_window(
                     acidx,
                     lat,
                     lon,
@@ -563,13 +557,6 @@ class SpawnGenerator:
                     from_lon=from_lon,
                     from_alt_ft=from_alt_ft,
                 )
-                if reach_lo is not None:
-                    alt_min_ft = (
-                        reach_lo if alt_min_ft is None else max(alt_min_ft, reach_lo)
-                    )
-                    alt_max_ft = (
-                        reach_hi if alt_max_ft is None else min(alt_max_ft, reach_hi)
-                    )
             alt_step_ft = step.get("alt_step_ft")
             env_alt, env_cas = feasible_alt_cas(
                 acidx,
@@ -595,23 +582,16 @@ class SpawnGenerator:
             if level is not None:
                 alt = round(alt / float(level)) * float(level)
 
-        resolved_target = WaypointTarget(
+        return RouteFix(
             lat=float(lat),
             lon=float(lon),
-            waypoint=None if sample_bounds is not None else target.waypoint,
-            alt_ft=alt,
-            speed_kts=speed,
-            reach_radius_nm=target.reach_radius_nm,
-            alt_tolerance_ft=target.alt_tolerance_ft,
-            speed_tolerance_kts=target.speed_tolerance_kts,
-            flyover=target.flyover,
+            waypoint=None if sample_bounds is not None else queryable.waypoint,
+            crossing=replace(
+                Crossing.from_step(step),
+                alt_ft=None if alt is None else float(alt),
+                speed_kts=None if speed is None else float(speed),
+            ),
         )
-        if resolved_target.speed_kts is not None and resolved_target.alt_ft is None:
-            raise ValueError(
-                "Route waypoint speed constraints require alt_ft or "
-                f"sample_alt_from_envelope. Got {step!r}."
-            )
-        return resolved_target
 
     def _resolve_route_for_aircraft(
         self,
@@ -625,30 +605,65 @@ class SpawnGenerator:
         # state of the next - so a chained leg's reachable-altitude window is
         # measured from the previous waypoint (where the aircraft actually
         # begins that leg), not from the spawn.
-        targets: list[WaypointTarget] = []
+        fixes: list[RouteFix] = []
         from_state: tuple[float, float, float | None] | None = None
         for step in route:
-            target = self._resolve_route_target_for_aircraft(
+            fix = self._resolve_fix_for_aircraft(
                 callsign, step, rng, from_state=from_state
             )
-            targets.append(target)
+            fixes.append(fix)
             # Next leg starts where this one ends; carry altitude forward when a
             # leg has no altitude constraint (the aircraft holds), so the chain
             # stays continuous rather than snapping back to the spawn altitude.
+            alt_ft = fix.crossing.alt_ft
             carry_alt = (
-                target.alt_ft
-                if target.alt_ft is not None
-                else (from_state[2] if from_state is not None else None)
+                alt_ft if alt_ft is not None else (from_state[2] if from_state is not None else None)
             )
-            from_state = (float(target.lat), float(target.lon), carry_alt)
+            from_state = (float(fix.lat), float(fix.lon), carry_alt)
         return ResolvedRoute(
-            names=[route_step_name(step) for step in route],
-            targets=targets,
+            names=tuple(route_step_name(step) for step in route),
+            fixes=tuple(fixes),
             arrival_slacks=tuple(
                 step.get("arrival_slack_s") if isinstance(step, dict) else None
                 for step in route
             ),
         )
+
+    def fly_route(
+        self,
+        callsign: str,
+        route: ResolvedRoute | None,
+        rng: np.random.Generator,
+        *,
+        replace_route: bool = False,
+    ) -> ResolvedRoute | None:
+        """Give ``callsign`` its resolved ``route``: to BlueSky to fly, with each
+        fix's due time drawn from its step's arrival slack, the RTAs its
+        crossings ask the FMS to fly, and kept as the aircraft's record
+        (:data:`~bluesky_sandbox.sim.fixes.ROUTES`). ``replace_route`` - in
+        place of the route it has; else after it. The route, with its times."""
+        runtime = self.env._runtime
+        fixes = route.fixes if route else ()
+        if replace_route:
+            runtime.replace_aircraft_route(callsign, fixes)
+        elif fixes:
+            runtime.append_aircraft_route(callsign, fixes)
+        if not route:
+            ROUTES.set(callsign, None)
+            self.env._query_state_monitor.set_aircraft_route(callsign, None)
+            return None
+        if any(slack is not None for slack in route.arrival_slacks):
+            times = arrival_times(
+                runtime.index(callsign), fixes, route.arrival_slacks, rng, runtime.sim_time
+            )
+            route = replace(
+                route,
+                fixes=tuple(replace(fix, due_s=due) for fix, due in zip(fixes, times)),
+            )
+        ROUTES.set(callsign, route)
+        runtime.set_rtas(callsign, route.fixes)
+        self.env._query_state_monitor.set_aircraft_route(callsign, route.names)
+        return route
 
     def _materialize_spawn(
         self,
@@ -700,32 +715,13 @@ class SpawnGenerator:
                 cas_kts,
             )
 
-        route = self._resolve_route_for_aircraft(callsign, item.route, rng)
-        if route:
-            self.env._runtime.append_aircraft_route(
-                callsign,
-                route.targets,
-            )
-            self.env._query_state_monitor.set_aircraft_route(
-                callsign,
-                route.names,
-            )
-            if any(slack is not None for slack in route.arrival_slacks):
-                acidx = self.env._runtime.index(callsign)
-                times = arrival_times(
-                    acidx,
-                    route.targets,
-                    route.arrival_slacks,
-                    rng,
-                    self.env._runtime.sim_time,
-                )
-                set_arrival_times(acidx, times)
-                if self.env.config.fly_arrival_times:
-                    self.env._runtime.set_arrival_times(callsign, times)
+        route = self.fly_route(
+            callsign, self._resolve_route_for_aircraft(callsign, item.route, rng), rng
+        )
         # Hooks see a names-only view (tasks may treat the route as a list of
         # waypoint names); the full step list with any per-step crossing
         # restrictions only reaches ADDWPT above.
-        route_names = route.names if route else None
+        route_names = list(route.names) if route else None
         self.env._hooks.on_aircraft_spawned(callsign, route_names)
         state = (
             item.control
@@ -753,7 +749,7 @@ class SpawnGenerator:
             item.region_index,
             controlled,
             route_names,
-            route.targets if route else (),
+            route.fixes if route else (),
             self._source_label(item.source_index),
         )
         return controlled
@@ -764,7 +760,7 @@ class SpawnGenerator:
         region_index: int,
         controlled: bool,
         route: list[str] | None,
-        targets: Sequence[WaypointTarget] = (),
+        fixes: Sequence[RouteFix] = (),
         source: str | None = None,
     ) -> None:
         idx = self.env._runtime.index(callsign)
@@ -784,7 +780,7 @@ class SpawnGenerator:
                 controlled=controlled,
                 region_index=region_index,
                 route=tuple(route) if route else None,
-                targets=tuple(targets),
+                fixes=tuple(fixes),
                 source=source,
             )
         )

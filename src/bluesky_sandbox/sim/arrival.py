@@ -25,6 +25,7 @@ import numpy as np
 from bluesky.tools.aero import ft, kts, nm, vcas2tas
 from bluesky.tools.geo import kwikqdrdist
 
+from bluesky_sandbox.sim.fixes import RouteFix
 from bluesky_sandbox.sim.sampling.distributions import sample_scalar
 
 __all__ = ["arrival_times", "hurry_overdue", "planned_legs"]
@@ -35,49 +36,45 @@ _MIN_SPEED_MS = 1.0
 _MIN_RATE_MS = 0.1
 
 
-def planned_legs(idx: int, targets: Sequence[Any]) -> tuple[tuple[float, float], ...]:
+def planned_legs(idx: int, fixes: Sequence[RouteFix]) -> tuple[tuple[float, float], ...]:
     """The ``(level_m, cas_ms)`` aircraft ``idx`` flies each leg of its route at,
     unless cleared otherwise: its spawn state into the first fix, then each
-    fix's altitude and speed gates from where it passes them."""
+    fix's crossing altitude and speed from where it passes them."""
     level_m, cas_ms = float(bs.traf.alt[idx]), float(bs.traf.cas[idx])
     plan = []
-    for target in targets:
+    for fix in fixes:
         plan.append((level_m, cas_ms))
-        if target.alt_ft is not None:
-            level_m = float(target.alt_ft) * ft
-        if target.speed_kts is not None:
-            cas_ms = float(target.speed_kts) * kts
+        if fix.crossing.alt_ft is not None:
+            level_m = float(fix.crossing.alt_ft) * ft
+        if fix.crossing.speed_kts is not None:
+            cas_ms = float(fix.crossing.speed_kts) * kts
     return tuple(plan)
 
 
 def arrival_times(
     idx: int,
-    targets: Sequence[Any],
+    fixes: Sequence[RouteFix],
     slacks: Sequence[Any],
     rng: np.random.Generator,
     now_s: float,
 ) -> tuple[float | None, ...]:
-    """The time aircraft ``idx`` is due over each of ``targets``, or ``None``
-    for a target with no slack (``slacks[k] is None``).
-
-    ``targets`` are the route's fixes in order (``lat``, ``lon``, ``alt_ft``,
-    ``speed_kts``, as :class:`~bluesky_sandbox.sim.queryables.WaypointTarget`);
-    each slack is a number of seconds or a distribution of them.
-    """
+    """The time aircraft ``idx`` is due over each of its route's ``fixes``, or
+    ``None`` for a fix with no slack (``slacks[k] is None``); each slack is a
+    number of seconds or a distribution of them."""
     lat, lon = float(bs.traf.lat[idx]), float(bs.traf.lon[idx])
     alt_m = float(bs.traf.alt[idx])
-    plan = planned_legs(idx, targets)
+    plan = planned_legs(idx, fixes)
     climb_ms = max(float(bs.traf.perf.vsmax[idx]), _MIN_RATE_MS)
     descent_ms = max(abs(float(bs.traf.perf.vsmin[idx])), _MIN_RATE_MS)
     vmax_cas_ms = float(bs.traf.perf.vmax[idx])
 
     t = float(now_s)
     out: list[float | None] = []
-    for target, slack, (level_m, cas_ms) in zip(targets, slacks, plan, strict=True):
+    for fix, slack, (level_m, cas_ms) in zip(fixes, slacks, plan, strict=True):
         speed_ms = max(float(vcas2tas(cas_ms, level_m)), _MIN_SPEED_MS)
-        _, dist_nm = kwikqdrdist(lat, lon, float(target.lat), float(target.lon))
+        _, dist_nm = kwikqdrdist(lat, lon, float(fix.lat), float(fix.lon))
         dist_m = float(dist_nm) * nm
-        to_alt_m = alt_m if target.alt_ft is None else float(target.alt_ft) * ft
+        to_alt_m = alt_m if fix.crossing.alt_ft is None else float(fix.crossing.alt_ft) * ft
         climb = to_alt_m - alt_m
         vertical_s = abs(climb) / (climb_ms if climb > 0.0 else descent_ms)
         nominal_s = max(dist_m / speed_ms, vertical_s)
@@ -90,7 +87,7 @@ def arrival_times(
             leg_s = max(nominal_s + float(sample_scalar(slack, rng)), earliest_s)
         t += leg_s
         out.append(t if slack is not None else None)
-        lat, lon, alt_m = float(target.lat), float(target.lon), to_alt_m
+        lat, lon, alt_m = float(fix.lat), float(fix.lon), to_alt_m
     return tuple(out)
 
 
@@ -101,7 +98,8 @@ def hurry_overdue() -> None:
     BlueSky's RTA stops guiding speed once the time is past - it leaves the
     last speed in place, which after a speed clearance is the cleared one - so
     an overdue aircraft resumed onto own navigation would stay slow. Called by
-    the environment each step when own navigation meets arrival times.
+    the environment each step; only fixes given an RTA - a crossing's ``rta`` -
+    have a time here.
     """
     from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms  # noqa: PLC0415
 

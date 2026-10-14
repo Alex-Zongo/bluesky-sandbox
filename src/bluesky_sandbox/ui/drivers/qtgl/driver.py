@@ -41,14 +41,18 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import bluesky as bs
 import zmq
 from bluesky.core.walltime import Timer
 from bluesky.stack import simstack
 
+from bluesky_sandbox.sim.fixes import ROUTES
 from bluesky_sandbox.ui.display.overlays import Point, Polygon, Polyline
 from bluesky_sandbox.ui.drivers.human_driver import HumanSimDriver
+from bluesky_sandbox.ui.drivers.qtgl.fix_windows import TOPIC as FIX_WINDOWS_TOPIC
+from bluesky_sandbox.ui.drivers.qtgl.fix_windows import fix_window_labels
 
 
 class QtGLSimDriver(HumanSimDriver):
@@ -120,8 +124,10 @@ class QtGLSimDriver(HumanSimDriver):
         #    stderr is redirected to DEVNULL so Qt/ZMQ teardown messages from
         #    the subprocess don't appear in the user's terminal on close.
         print("BlueSky: launching QtGL window...", flush=True)
+        # BlueSky's client, with the sandbox's drawing - each fix's
+        # constraints - loaded into it, run as a script (see client).
         self._proc = subprocess.Popen(
-            [sys.executable, '-m', 'bluesky', '--client', 'localhost'],
+            [sys.executable, str(Path(__file__).with_name('client.py')), 'localhost'],
             stderr=subprocess.DEVNULL,
         )
 
@@ -168,6 +174,10 @@ class QtGLSimDriver(HumanSimDriver):
         simstack.process()
 
         self._reg_count += 1
+        # Each fix's constraints, sent again now and then: a GUI connecting
+        # late, or after a reset, has them too.
+        if self._reg_count % 10 == 1:
+            self._send_fix_windows()
         if self._reg_count <= self._REG_WINDOW and self._reg_count % 10 == 0:
             # Cycle unsubscribe -> subscribe to emit a fresh registration
             # message through the proxy so the GUI can detect this node.
@@ -188,6 +198,13 @@ class QtGLSimDriver(HumanSimDriver):
                 bs.scr.update()
                 simstack.process()
                 time.sleep(0.05)
+
+    def _send_fix_windows(self) -> None:
+        """Send the crossings of the fixes the aircraft's routes cross to the GUI
+        to label them (see fix_windows)."""
+        if self._env is not None:
+            routes = [r for r in (ROUTES.route(i) for i in range(bs.traf.ntraf)) if r is not None]
+            bs.net.send(FIX_WINDOWS_TOPIC, fix_window_labels(self._env.episode_queryables or {}, routes))
 
     def on_reset(self, env=None) -> None:
         """Draw all renderables and pan to fit after a reset."""

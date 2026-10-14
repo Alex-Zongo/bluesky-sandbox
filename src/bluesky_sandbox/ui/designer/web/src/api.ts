@@ -322,20 +322,28 @@ export interface SpawnedAircraft {
   region_index: number;
   route: string[] | null;
   label: string[];
-  // The route's waypoints as resolved for this aircraft, with their constraints.
-  targets: SpawnTarget[];
+  // The route's fixes as resolved for this aircraft, each crossed as its step says.
+  fixes: SpawnFix[];
 }
 
-export interface SpawnTarget {
+export interface SpawnFix {
   waypoint: string | null;
   lat: number;
   lon: number;
   alt_ft: number | null;
   speed_kts: number | null;
+  // Its windows: how far below / above alt_ft and speed_kts it reaches.
+  alt_below_ft: number | null;
+  alt_above_ft: number | null;
+  speed_below_kts: number | null;
+  speed_above_kts: number | null;
+  flyover: boolean;
+  // Handed to BlueSky as its RTA there, when due_s is set.
+  rta: boolean;
+  // When it is due over the fix, sim seconds - for a step with an arrival slack.
+  due_s: number | null;
+  // The waypoint's own: how near counts as reaching it, and its color.
   reach_radius_nm: number | null;
-  alt_tolerance_ft: number | null;
-  speed_tolerance_kts: number | null;
-  speed_tolerance_mach: number | null;
   color: string | null;
 }
 

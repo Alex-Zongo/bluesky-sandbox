@@ -1,7 +1,7 @@
 // Route ⇄ graph translation for the Route tab.
 //
-// A route is a nested step-list (the spec model): a waypoint name, a constrained
-// waypoint {waypoint,speed_kts?,alt_ft?}, a subroute reference {route}, or a
+// A route is a nested step-list (the spec model): a waypoint name, a waypoint
+// crossed its own way {waypoint, ...crossing}, a subroute reference {route}, or a
 // branch {choice:[steps…][], weights?}. This module DECOMPILES that into a laid-
 // out node/edge graph for React Flow, and provides guided EDIT operations that
 // are pure transforms on the step-list — so every edit yields a valid
@@ -9,7 +9,12 @@
 
 import { shares } from "../shares";
 
-export type WpStep = { waypoint: string; speed_kts?: number; alt_ft?: number };
+// How the route crosses the fix - alt_ft, speed_kts and their windows,
+// flyover, arrival_slack_s, rta - and its sampling.
+export type WpStep = {
+  waypoint: string;
+  [key: string]: any;
+};
 export type Subroute = { route: string };
 export type Choice = { choice: RouteStep[][]; weights?: number[] };
 export type RouteStep = string | Subroute | Choice | WpStep;
@@ -67,7 +72,7 @@ export type GEdge = {
   optionIndex?: number;
 };
 
-const COL = 140;
+const COL = 190;
 const ROW = 60;
 
 type Sub = {
@@ -201,7 +206,13 @@ export function deleteAt(route: RouteStep[], addr: Addr): RouteStep[] {
   return next;
 }
 
-// Replace the step at an address (e.g. editing a crossing restriction).
+// The step at an address.
+export function stepAt(route: RouteStep[], addr: Addr): RouteStep {
+  const { list, index } = locate(route, addr);
+  return list[index];
+}
+
+// Replace the step at an address (e.g. editing how it crosses its fix).
 export function replaceAt(route: RouteStep[], addr: Addr, step: RouteStep): RouteStep[] {
   const next = clone(route);
   const { list, index } = locate(next, addr);

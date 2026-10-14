@@ -114,11 +114,7 @@ def queryable_geometry(name: str, q: Any, *, per_aircraft: bool = False) -> dict
             "ident": q.waypoint,
             "lat": float(q.lat),
             "lon": float(q.lon),
-            "alt_ft": q.alt_ft,
-            "speed_kts": q.speed_kts,
             "reach_radius_nm": q.reach_radius_nm,
-            "alt_tolerance_ft": q.alt_tolerance_ft,
-            "speed_tolerance_kts": q.speed_tolerance_kts,
             "render_shape": q.render_shape,
             "render_label": q.render_label,
             # The runtime Waypoint no longer knows how it was sampled (the

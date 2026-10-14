@@ -135,7 +135,7 @@ def _waypoints():
         "type": "region",
         "footprint": {"type": "point", "fix": "EKROS"},  # where the navdb has it
     }
-    spec.queryables["at_fix"] = {"type": "waypoint", "bounds": {"ref": "fix_a"}, "alt_ft": 3000}
+    spec.queryables["at_fix"] = {"type": "waypoint", "bounds": {"ref": "fix_a"}}
     spec.queryables["at_gate"] = {"type": "waypoint", "bounds": {"ref": "gate"}}
     spec.queryables["each"] = {"type": "waypoint", "bounds": {"ref": "gate"}, "sample_per": "aircraft"}
     spec.queryables["named"] = {"type": "waypoint", "bounds": {"ref": "ekros"}}

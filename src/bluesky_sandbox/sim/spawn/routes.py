@@ -14,18 +14,23 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from bluesky_sandbox.sim.fixes import CROSSING_KEYS
+from bluesky_sandbox.sim.sampling.distributions import sample_scalar
+
 # A route is an ordered list of steps. A step is one of:
-#   * a Waypoint queryable name (``str``) - inherits that waypoint's own
-#     altitude/speed constraints;
-#   * a constrained waypoint ``{"waypoint": "<name>", "speed_kts": .., "alt_ft": ..}``
-#     - a crossing restriction local to this route, overriding the waypoint's
-#     own ``speed_kts`` / ``alt_ft``. ``alt_ft`` may be used alone; ``speed_kts``
-#     requires ``alt_ft`` or envelope altitude sampling;
+#   * a Waypoint queryable name (``str``) - fly to that place, no crossing;
+#   * a waypoint with its crossing ``{"waypoint": "<name>", ...}`` - how this
+#     route crosses it (:class:`~bluesky_sandbox.sim.fixes.Crossing`):
+#     ``alt_ft`` / ``speed_kts`` and their windows (``alt_below_ft`` /
+#     ``alt_above_ft``, ``speed_below_kts`` / ``speed_above_kts``), ``flyover``,
+#     ``rta``. Each may be used alone: ``speed_kts`` with no ``alt_ft`` is
+#     "250 KT or less" at a fix with no level, flown as a speed alone;
 #   * a sampled waypoint target ``{"waypoint": "<name>", "sample": Bounds, ...}``
 #     - resolved per spawned aircraft into a concrete BlueSky route target;
 #   * any waypoint step may carry ``arrival_slack_s`` - seconds, or a
-#     distribution of them - giving its fix a target arrival time
-#     (:mod:`bluesky_sandbox.sim.arrival`);
+#     distribution of them - giving its fix an arrival time
+#     (:mod:`bluesky_sandbox.sim.arrival`), which the aircraft's FMS flies as
+#     an RTA where the step says ``rta``;
 #   * a subroute reference ``{"route": "<name>"}`` expanded inline;
 #   * a branch ``{"choice": [step, ...], "weights": [w, ...]}`` - one branch is
 #     taken (weighted; uniform if ``weights`` omitted). Branches let a procedure
@@ -86,8 +91,7 @@ def route_colors(routes: dict, extra: int = 0) -> list[str]:
     return out
 _WAYPOINT_STEP_KEYS = (
     "waypoint",
-    "speed_kts",
-    "alt_ft",
+    *CROSSING_KEYS,
     "sample",
     "sample_alt_from_envelope",
     "sample_speed_from_envelope",
@@ -118,6 +122,47 @@ def route_step_names(steps) -> list[str]:
     return [route_step_name(step) for step in steps]
 
 
+#: A crossing's numbers - a step may give each as a finite number, a
+#: ``(low, high)`` range or a distribution, drawn once per episode by the
+#: scenario (:func:`draw_crossings`) - or, where a spawn config is used without
+#: one, per aircraft at spawn.
+_CROSSING_NUMBERS = tuple(key for key in CROSSING_KEYS if key not in ("flyover", "rta"))
+
+
+def _crossing_value(value) -> bool:
+    """A finite number, a ``(low, high)`` range of them, or a distribution."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return math.isfinite(value)
+    if isinstance(value, (tuple, list)):
+        return len(value) == 2 and all(_crossing_value(v) for v in value)
+    return hasattr(value, "rvs")
+
+
+def draw_crossings(steps, rng: np.random.Generator):
+    """``steps`` with each crossing number given as a range or distribution
+    drawn - choice branches included."""
+
+    def step_drawn(step):
+        if isinstance(step, dict) and "choice" in step:
+            branches = [
+                draw_crossings(branch, rng) if isinstance(branch, list) else step_drawn(branch)
+                for branch in step["choice"]
+            ]
+            return {**step, "choice": branches}
+        if not (isinstance(step, dict) and "waypoint" in step):
+            return step
+        out = dict(step)
+        for key in _CROSSING_NUMBERS:
+            value = out.get(key)
+            if value is not None and not isinstance(value, (int, float)):
+                out[key] = float(sample_scalar(value, rng))
+        return out
+
+    return map_route_steps(steps, lambda flat: [step_drawn(step) for step in flat])
+
+
 def _validate_waypoint_step(step: dict) -> str:
     """Validate a ``{"waypoint": name, ...}`` step; return its waypoint name."""
     name = step.get("waypoint")
@@ -129,9 +174,14 @@ def _validate_waypoint_step(step: dict) -> str:
             f"route waypoint step {step!r} has unknown keys {sorted(extra)}; "
             f"allowed: {list(_WAYPOINT_STEP_KEYS)}."
         )
+    for key in _CROSSING_NUMBERS:
+        value = step.get(key)
+        if value is not None and not _crossing_value(value):
+            raise ValueError(
+                f"route waypoint step {key!r} must be a finite number, a (low, high) "
+                f"range or a distribution, got {value!r}."
+            )
     for key in (
-        "speed_kts",
-        "alt_ft",
         "envelope_alt_floor_ft",
         "alt_step_ft",
         "reachable_vs_fraction",
@@ -143,16 +193,15 @@ def _validate_waypoint_step(step: dict) -> str:
             raise ValueError(
                 f"route waypoint step {key!r} must be a finite number, got {value!r}."
             )
-    if (
-        step.get("speed_kts") is not None
-        and step.get("alt_ft") is None
-        and not bool(step.get("sample_alt_from_envelope", False))
-        and not bool(step.get("alt_from_start", False))
-    ):
-        raise ValueError(
-            "route waypoint step speed_kts requires alt_ft, "
-            f"sample_alt_from_envelope=True or alt_from_start=True, got {step!r}."
-        )
+    for key in ("alt_below_ft", "alt_above_ft", "speed_below_kts", "speed_above_kts"):
+        if isinstance(step.get(key), (int, float)) and step[key] < 0:
+            raise ValueError(
+                f"route waypoint step {key!r} - how far its window reaches - must be "
+                f">= 0, got {step[key]!r}."
+            )
+    for key in ("flyover", "rta"):
+        if key in step and not isinstance(step[key], bool):
+            raise ValueError(f"route waypoint step {key!r} must be True or False, got {step[key]!r}.")
     if bool(step.get("alt_from_start", False)) and (
         step.get("alt_ft") is not None or bool(step.get("sample_alt_from_envelope", False))
     ):
@@ -277,8 +326,9 @@ def _resolve_pick(steps, routes, seen, pick) -> list[str]:
     return out
 
 
-def _resolve_all(steps, routes, seen) -> list[list[str]]:
-    """Enumerate every concrete path through ``steps`` (cartesian over choices)."""
+def _resolve_all(steps, routes, seen, keep_steps: bool = False) -> list[list]:
+    """Enumerate every concrete path through ``steps`` (cartesian over choices):
+    waypoint names, or - ``keep_steps`` - the steps themselves."""
     paths: list[list[str]] = [[]]
     for step in route_steps(steps):
         if isinstance(step, dict):
@@ -286,7 +336,7 @@ def _resolve_all(steps, routes, seen) -> list[list[str]]:
                 branches, _ = _validate_choice(step)
                 branch_paths: list[list[str]] = []
                 for branch in branches:
-                    branch_paths.extend(_resolve_all(_branch_steps(branch), routes, seen))
+                    branch_paths.extend(_resolve_all(_branch_steps(branch), routes, seen, keep_steps))
                 paths = [p + bp for p in paths for bp in branch_paths]
             elif "route" in step:
                 name = step["route"]
@@ -296,11 +346,12 @@ def _resolve_all(steps, routes, seen) -> list[list[str]]:
                     raise ValueError(
                         f"subroute {name!r} not found; available routes: {list(routes)}."
                     )
-                sub = _resolve_all(routes[name], routes, seen + (name,))
+                sub = _resolve_all(routes[name], routes, seen + (name,), keep_steps)
                 paths = [p + sp for p in paths for sp in sub]
             elif "waypoint" in step:
                 name = _validate_waypoint_step(step)
-                paths = [p + [name] for p in paths]  # names only for viz/validation
+                leaf = step if keep_steps else name
+                paths = [p + [leaf] for p in paths]
             else:
                 raise ValueError(
                     f"route step dict must have a 'waypoint', 'route', or 'choice' "
@@ -346,6 +397,41 @@ def sample_route_path(
         return branches[int(rng.choice(len(branches), p=w / w.sum()))]
 
     return _collapse_steps(_resolve_pick(steps, routes, (), pick))
+
+
+def waypoint_steps(spawn) -> dict[str, list[dict]]:
+    """Every route step of ``spawn`` (a :class:`SpawnConfig`) that states how a
+    waypoint is crossed, by waypoint name - its own route, its named routes and
+    each region's, choice branches included."""
+    out: dict[str, list[dict]] = {}
+
+    def walk(steps):
+        for step in route_steps(steps):
+            if isinstance(step, dict) and "choice" in step:
+                for branch in step["choice"]:
+                    walk(branch if isinstance(branch, list) else [branch])
+            elif isinstance(step, dict) and isinstance(step.get("waypoint"), str):
+                out.setdefault(step["waypoint"], []).append(step)
+
+    routes = [*(spawn.routes or {}).values(), spawn.route, *(r.route for r in spawn.regions)]
+    for route in routes:
+        if isinstance(route, (list, tuple, Route)):
+            walk(route)
+    return out
+
+
+def expand_route_step_paths(steps: RouteSpec, routes: dict[str, RouteSpec]) -> list[list[RouteStep]]:
+    """:func:`expand_route_paths` keeping each step - its crossing with it -
+    rather than its waypoint's name."""
+    seen: set[tuple[str, ...]] = set()
+    out: list[list[RouteStep]] = []
+    for path in _resolve_all(steps, routes, (), keep_steps=True):
+        collapsed = _collapse_steps(path)
+        key = tuple(route_step_name(step) for step in collapsed)
+        if key not in seen:
+            seen.add(key)
+            out.append(collapsed)
+    return out
 
 
 def expand_route_paths(

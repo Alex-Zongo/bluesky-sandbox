@@ -30,7 +30,7 @@ from bluesky_sandbox.ui.designer.spec import _route_dump, _route_load
 _QUERYABLES = {
     "SIE": Waypoint(lat=39.0955, lon=-74.80033333),
     "BOTON": Waypoint(lat=39.414472, lon=-74.454744, render_label=False),
-    "HOGGS": Waypoint(lat=39.582847, lon=-74.270575, alt_ft=18_000),
+    "HOGGS": Waypoint(lat=39.582847, lon=-74.270575),
 }
 _ROUTES = {"WEST": ["SIE", "BOTON"], "ARRIVAL": Route([{"route": "WEST"}, "HOGGS"], "white")}
 

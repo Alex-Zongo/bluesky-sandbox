@@ -3,7 +3,7 @@
 // context. Category visibility + per-element hide are applied here so the spec
 // is never mutated by view toggles.
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer, TextLayer } from "@deck.gl/layers";
-import type { NavFeatures, PreviewResult, SpawnedAircraft, SpawnTarget, SpecDict } from "../api";
+import type { NavFeatures, PreviewResult, SpawnedAircraft, SpawnFix, SpecDict } from "../api";
 import type {
   CategoryVisibility,
   Edge,
@@ -28,6 +28,7 @@ import {
   waypointPosition,
   waypointPositions,
   zMeters,
+  WAYPOINT_LIFT_M,
   addWaypointStem,
   waypointToleranceGeometry,
 } from "./geometry";
@@ -79,19 +80,73 @@ const fl = (ft: number) => `FL${three(ft / 100)}`;
 // An aircraft's tag: its pygame label, and its heading.
 export const aircraftTag = (a: SpawnedAircraft) => [...a.label, `HDG${three(a.hdg_deg % 360)}`].join("\n");
 
-// A target's tag: its name, then the window an aircraft must be in to reach
-// it - altitude, speed, reach radius - for what the target constrains.
-export function targetTag(t: SpawnTarget): string {
-  const window = (at: number, tol: number | null, show: (v: number) => string, unit = "") =>
-    tol ? `${show(at - tol)}–${show(at + tol)}${unit}` : `${show(at)}${unit}`;
+// A fix's tag: its name, then how its step crosses it - the altitude and speed
+// windows, fly-over, its due time - and the waypoint's reach radius.
+export function fixTag(t: SpawnFix): string {
+  // A value's window: from its lower end to its upper, "≥" / "≤" for one with
+  // a side open, the value alone for one with neither.
+  const window = (at: number, below: number | null, above: number | null, show: (v: number) => string, unit = "") => {
+    if (below != null && above != null) return `${show(at - below)}–${show(at + above)}${unit}`;
+    if (below != null) return `≥${show(at - below)}${unit}`;
+    if (above != null) return `≤${show(at + above)}${unit}`;
+    return `${show(at)}${unit}`;
+  };
   const parts: string[] = [];
-  if (t.alt_ft != null) parts.push(window(t.alt_ft, t.alt_tolerance_ft, fl));
+  if (t.alt_ft != null) parts.push(window(t.alt_ft, t.alt_below_ft, t.alt_above_ft, fl));
   if (t.speed_kts != null) {
-    parts.push(window(t.speed_kts, t.speed_tolerance_kts, (v) => String(Math.round(v)), " kt"));
-    if (t.speed_tolerance_mach) parts.push(`M±${t.speed_tolerance_mach}`.replace("0.", "."));
+    parts.push(window(t.speed_kts, t.speed_below_kts, t.speed_above_kts, (v) => String(Math.round(v)), " kt"));
   }
+  if (t.flyover) parts.push("fly-over");
+  if (t.due_s != null) parts.push(`${t.rta ? "RTA" : "due"} t+${Math.round(t.due_s)} s`);
   if (t.reach_radius_nm) parts.push(`r ${t.reach_radius_nm} nm`);
-  return [t.waypoint ?? "target", parts.join(" · ")].filter(Boolean).join("\n");
+  return [t.waypoint ?? "fix", parts.join(" · ")].filter(Boolean).join("\n");
+}
+
+// How far an open side of a crossing window is drawn past its end, ft, fading:
+// "at or above 5000" has no top, so it is shown leaving upward.
+const OPEN_WINDOW_FT = 1500;
+
+// Each route's crossing of each fix it states an altitude at: a stem from the
+// waypoint on the ground up to the route's height there, and its window as a
+// band on the stem - an open side drawn fading past its end. One per route and
+// fix however many limbs share it, so two routes crossing one fix differently
+// stand side by side on its stem.
+type CrossingSegment = {
+  src: [number, number, number];
+  tgt: [number, number, number];
+  color: RGBA;
+  width: number;
+  routeName: string;
+  crossingText: string;
+};
+function crossingSegments(
+  routes: RoutePath[],
+  alphaFor: (r: RoutePath) => number,
+  widthFor: (r: RoutePath) => number,
+  stemWidth: number,
+): CrossingSegment[] {
+  const out: CrossingSegment[] = [];
+  const seen = new Set<string>();
+  for (const r of routes) {
+    r.points.forEach(([lon, lat, z], i) => {
+      if (r.inferred[i]) return;
+      const key = `${r.key}|${r.names[i]}|${z}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const w = r.windows[i];
+      const crossingText = `${r.names[i]} on ${r.name}: ${w?.text ?? "no altitude"}`;
+      const tint = (alpha: number): RGBA => [r.color[0], r.color[1], r.color[2], Math.round(alpha)];
+      const at = (ft: number): [number, number, number] => [lon, lat, zMeters(ft) + WAYPOINT_LIFT_M];
+      const seg = (src: [number, number, number], tgt: [number, number, number], alpha: number, width: number) =>
+        out.push({ src, tgt, color: tint(alpha), width, routeName: r.name, crossingText });
+      seg([lon, lat, WAYPOINT_LIFT_M], [lon, lat, z], alphaFor(r) * 0.6, stemWidth);
+      if (!w) return;
+      if (w.hi > w.lo) seg(at(w.lo), at(w.hi), alphaFor(r), widthFor(r) * 2);
+      if (w.openBelow) seg(at(Math.max(0, w.lo - OPEN_WINDOW_FT)), at(w.lo), alphaFor(r) * 0.35, widthFor(r) * 2);
+      if (w.openAbove) seg(at(w.hi), at(w.hi + OPEN_WINDOW_FT), alphaFor(r) * 0.35, widthFor(r) * 2);
+    });
+  }
+  return out;
 }
 
 // An inferred route leg: how strongly it is drawn against a solid one, and
@@ -106,18 +161,19 @@ function dashed<T extends { points: [number, number, number][] }>(leg: T): T[] {
   return Array.from({ length: LEG_DASHES }, (_, d) => ({ ...leg, points: [at(d / LEG_DASHES), at((d + 0.5) / LEG_DASHES)] }));
 }
 
-export const spawnTargetKey = (t: SpawnTarget) => `target:${t.waypoint}:${t.lat.toFixed(5)}:${t.lon.toFixed(5)}:${t.alt_ft}`;
+export const spawnFixKey = (t: SpawnFix) => `target:${t.waypoint}:${t.lat.toFixed(5)}:${t.lon.toFixed(5)}:${t.alt_ft}`;
 
-// The targets of every aircraft, each once.
-export function uniqueTargets(flown: SpawnedAircraft[]): SpawnTarget[] {
-  const seen = new Map<string, SpawnTarget>();
-  for (const a of flown) for (const t of a.targets) seen.set(spawnTargetKey(t), t);
+// The fixes of every aircraft, each once.
+export function uniqueFixes(flown: SpawnedAircraft[]): SpawnFix[] {
+  const seen = new Map<string, SpawnFix>();
+  for (const a of flown) for (const t of a.fixes) seen.set(spawnFixKey(t), t);
   return [...seen.values()];
 }
 
 export function getTooltip({ object }: any) {
   if (!object) return null;
   if (object.points) return { text: `route: ${object.name}` };
+  if (object.crossingText) return { text: object.crossingText };
   if (object.routeName) return { text: `route: ${object.routeName}` };
   if (object.awid) return { text: `${object.awid}  ${object.from_id} → ${object.to_id}` };
   if (object.icao) return { text: `${object.icao}${object.name ? " — " + object.name : ""}` };
@@ -128,7 +184,7 @@ export function getTooltip({ object }: any) {
         ...object.label,
         `HDG${String(Math.round(object.hdg_deg) % 360).padStart(3, "0")}  spawned t+${Math.round(object.time_s)} s`,
         object.controlled ? "controlled" : "background traffic",
-        ...(object.targets ?? []).map((t: SpawnTarget) => `→ ${targetTag(t).replace("\n", "  ")}`),
+        ...(object.fixes ?? []).map((t: SpawnFix) => `→ ${fixTag(t).replace("\n", "  ")}`),
       ].join("\n"),
     };
   if (object.actype) return { text: `${object.actype}  ${Math.round(object.alt_ft)} ft` };
@@ -230,12 +286,10 @@ export function deckLayers(
         // Per-aircraft sampled waypoints have no single fixed point — each
         // aircraft draws its own target (shown as rings), so skip the static marker.
         .filter((q) => q.kind === "waypoint" && q.render_shape !== false && !(q as any).sample_per_aircraft && shown(`queryable:${q.name}`))
-        // Envelope-altitude waypoints carry no alt_ft; use the preview's
-        // representative display altitude so the marker (stem + tolerance
-        // volume) renders at a sensible height instead of on the ground.
+        // A waypoint is a place, drawn on the ground; each route's stem rises
+        // from it to where that route crosses it (see the route layers).
         .map((q: any) => ({
           ...q,
-          alt_ft: q.alt_ft ?? q.display_alt_ft,
           target: { scope: "queryable", name: q.name },
         }))
     : [];
@@ -605,8 +659,8 @@ export function deckLayers(
       parameters: { depthTest: false },
     }),
     // Waypoint tolerance: a real flat lat/lon disc at the waypoint altitude.
-    // If altitude tolerance is set, render top/bottom discs and sparse vertical
-    // edges so the tolerance has visible height.
+    // If it has an altitude window, render its bottom and top discs and sparse
+    // vertical edges so the window has visible height.
     new SolidPolygonLayer({
       id: "waypoint-tolerance-faces",
       data: waypointOut.faces,
@@ -745,6 +799,18 @@ export function deckLayers(
         parameters: { depthTest: false },
         updateTriggers: { getColor: highlightedRoute, getWidth: [highlightedRoute, lineScale] },
       }),
+      new LineLayer({
+        id: "route-crossings",
+        data: crossingSegments(visibleRoutes, alphaFor, widthFor, lw(1)),
+        getSourcePosition: (d: CrossingSegment) => d.src,
+        getTargetPosition: (d: CrossingSegment) => d.tgt,
+        getColor: (d: CrossingSegment) => d.color,
+        getWidth: (d: CrossingSegment) => d.width,
+        widthUnits: "pixels",
+        pickable: true,
+        parameters: { depthTest: false },
+        updateTriggers: { getColor: highlightedRoute, getWidth: [highlightedRoute, lineScale] },
+      }),
       new IconLayer({
         id: "route-arrows",
         data: arrows,
@@ -766,7 +832,7 @@ export function deckLayers(
   if (visibility.aircraft) {
     // Per-aircraft goal: a faint line to each aircraft's sampled target plus a
     // hollow ring at it, so stepping the episode shows the per-aircraft destination spread.
-    // Once the episode run is in, its aircraft's own resolved targets are
+    // Once the episode run is in, its aircraft's own resolved fixes are
     // drawn below instead of the preview's draw of them.
     const targeted = flown ? [] : preview.sampled_aircraft.filter((a: any) => a.target);
     const targetZ = (a: any) => zMeters(a.target.alt_ft ?? a.alt_ft);
@@ -788,8 +854,10 @@ export function deckLayers(
           lon: t.lon,
           alt_ft: t.alt_ft,
           reach_radius_nm: t.reach_radius_nm,
-          alt_tolerance_ft: t.alt_tolerance_ft,
-          speed_tolerance_kts: t.speed_tolerance_kts,
+          alt_below_ft: t.alt_below_ft,
+          alt_above_ft: t.alt_above_ft,
+          speed_below_kts: t.speed_below_kts,
+          speed_above_kts: t.speed_above_kts,
           color: t.color,
         },
         targetShapes.faces,
@@ -902,11 +970,11 @@ export function deckLayers(
         }),
         pickRing(flown.filter((a) => a.callsign === picked).map((a) => [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)])),
       );
-      // Each aircraft's route as resolved for it: a line through its targets,
-      // and at each target its constraint window - the reach disc, the
+      // Each aircraft's route as resolved for it: a line through its fixes,
+      // and at each fix its crossing window - the reach disc, the
       // altitude band as a cylinder - drawn once however many share it.
       const shapes = { edges: [] as WaypointEdge[], faces: [] as WaypointFace[] };
-      for (const t of uniqueTargets(flown)) {
+      for (const t of uniqueFixes(flown)) {
         waypointToleranceGeometry(
           {
             name: t.waypoint ?? "target",
@@ -915,8 +983,10 @@ export function deckLayers(
             alt_ft: t.alt_ft,
             speed_kts: t.speed_kts,
             reach_radius_nm: t.reach_radius_nm,
-            alt_tolerance_ft: t.alt_tolerance_ft,
-            speed_tolerance_kts: t.speed_tolerance_kts,
+            alt_below_ft: t.alt_below_ft,
+            alt_above_ft: t.alt_above_ft,
+            speed_below_kts: t.speed_below_kts,
+            speed_above_kts: t.speed_above_kts,
             color: t.color ?? "cyan",
           },
           shapes.faces,
@@ -926,12 +996,12 @@ export function deckLayers(
       layers.push(
         new PathLayer({
           id: "aircraft-routes",
-          data: flown.filter((a) => a.targets.length),
+          data: flown.filter((a) => a.fixes.length),
           getPath: (a: SpawnedAircraft) => {
             let alt = a.alt_ft;
             return [
               [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)],
-              ...a.targets.map((t) => {
+              ...a.fixes.map((t) => {
                 alt = t.alt_ft ?? alt;
                 return [t.lon, t.lat, zMeters(alt)] as [number, number, number];
               }),
@@ -989,13 +1059,13 @@ export function deckLayers(
             billboard: true,
             parameters: { depthTest: false },
           });
-        const targets = uniqueTargets(flown).filter((t) => targetTag(t).includes("\n"));
+        const targets = uniqueFixes(flown).filter((t) => fixTag(t).includes("\n"));
         layers.push(
           tagLayer(
             "aircraft-target-labels",
-            tagged ? targets.filter((t) => tagged.has(spawnTargetKey(t))) : targets,
-            (t: SpawnTarget) => [t.lon, t.lat, zMeters(t.alt_ft ?? 0)],
-            targetTag,
+            tagged ? targets.filter((t) => tagged.has(spawnFixKey(t))) : targets,
+            (t: SpawnFix) => [t.lon, t.lat, zMeters(t.alt_ft ?? 0)],
+            fixTag,
             [253, 230, 138, 255],
             [40, 32, 10, 215],
           ),

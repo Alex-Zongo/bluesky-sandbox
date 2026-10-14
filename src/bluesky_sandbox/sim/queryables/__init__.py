@@ -29,7 +29,6 @@ from .waypoints import (
     WaypointResult,
     WaypointRoute,
     WaypointStep,
-    WaypointTarget,
 )
 
 __all__ = [
@@ -45,5 +44,4 @@ __all__ = [
     "WaypointResult",
     "WaypointRoute",
     "WaypointStep",
-    "WaypointTarget",
 ]

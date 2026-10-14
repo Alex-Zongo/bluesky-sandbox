@@ -21,3 +21,21 @@ export const withRouteSteps = (route: any, steps: RouteStep[]): NamedRoute => {
 // The route in ``color`` - or, with none, the default colors' (its steps alone).
 export const withRouteColor = (route: any, color: string | undefined): NamedRoute =>
   color ? { type: "route", steps: routeSteps(route), color } : routeSteps(route);
+
+// Every step through each waypoint, across the design's routes - its named
+// ones, the global one and each region's - however deep in a branch: what
+// each route crosses it at. A bare name crosses it as stated nowhere.
+export function waypointSteps(spawn: any): Record<string, Record<string, any>[]> {
+  const out: Record<string, Record<string, any>[]> = {};
+  const walk = (steps: any) => {
+    for (const s of Array.isArray(steps) ? steps : []) {
+      if (typeof s === "string") (out[s] ??= []).push({ waypoint: s });
+      else if (typeof s?.waypoint === "string") (out[s.waypoint] ??= []).push(s);
+      else if (Array.isArray(s?.choice)) s.choice.forEach((b: any) => walk(Array.isArray(b) ? b : [b]));
+    }
+  };
+  for (const route of Object.values(spawn?.routes ?? {})) walk(routeSteps(route));
+  walk(spawn?.route);
+  for (const region of spawn?.regions ?? []) walk(region?.route);
+  return out;
+}

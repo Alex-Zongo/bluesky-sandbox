@@ -20,7 +20,7 @@ pytest.importorskip("pygame")
 
 _QUERYABLES = {
     "timed": Waypoint(lat=52.0, lon=6.0),
-    "gated": Waypoint(lat=52.0, lon=7.0, alt_ft=20_000, speed_kts=230),
+    "gated": Waypoint(lat=52.0, lon=7.0),
 }
 
 
@@ -37,7 +37,10 @@ class _Scenario:
                 "spd_kts": (250, 250),
                 "hdg_deg": (90, 90),
             },
-            route=[{"waypoint": "timed", "arrival_slack_s": 120.0}, "gated"],
+            route=[
+                {"waypoint": "timed", "arrival_slack_s": 120.0},
+                {"waypoint": "gated", "alt_ft": 20_000, "speed_kts": 230},
+            ],
         )
         spawn = SpawnConfig(
             regions=[region], aircraft_type="B744", conflict_free_spawn=False

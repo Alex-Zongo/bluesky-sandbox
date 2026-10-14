@@ -45,7 +45,6 @@ export const DEFAULT_SPEC: SpecDict = {
     wind_kts: 0.0,
     turbulence_kts: 0.0,
     gust_tau_s: 30.0,
-    fly_arrival_times: false,
   },
   // Custom observation/action fields can live in e.g. custom_fields.py and be
   // referenced as "custom_fields:MyField".

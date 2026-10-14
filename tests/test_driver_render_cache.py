@@ -39,13 +39,13 @@ class _Scenario:
                 color="cyan",
             ),
             "storm": QueryRegion(RegionBounds(storm, ConstantAltitudeBand(0, 35_000)), color="red"),
-            "WP1": Waypoint(lat=52.0, lon=6.0, alt_ft=20_000),
+            "WP1": Waypoint(lat=52.0, lon=6.0),
         }
         region = SpawnRegion(
             bounds=RegionBounds(BoxFootprint(51.2, 52.8, 3.5, 6.0)),
             n_aircraft=3,
             params={"alt_ft": (10_000, 30_000), "spd_kts": (250, 250)},
-            route=["WP1"],
+            route=[{"waypoint": "WP1", "alt_ft": 20_000}],
         )
         return EpisodeSpec(
             airspace_bounds=RegionBounds(

@@ -23,9 +23,7 @@ from .spec import (
     EnvSpec,
     FieldRef,
     extract_waypoint_field_dists,
-    envelope_alt_step,
     is_envelope_value,
-    is_start_value,
     is_value_distribution,
     representative_value,
 )
@@ -368,21 +366,6 @@ class _Emitter:
                 lat = (lat_min + lat_max) / 2.0
                 lon = (lon_min + lon_max) / 2.0
             args.append(f"lat={self.num(lat)}, lon={self.num(lon)}")
-        # Numeric constraint/target fields may be distribution-valued; emit the
-        # support scalar here (the per-episode draw lives in WAYPOINT_FIELDS).
-        for k in (
-            "alt_ft",
-            "speed_kts",
-            "alt_tolerance_ft",
-            "speed_tolerance_kts",
-            "speed_tolerance_mach",
-        ):
-            val = d.get(k)
-            if val is None:
-                continue
-            if k in ("alt_ft", "speed_kts") and (is_envelope_value(val) or is_start_value(val)):
-                continue
-            args.append(f"{k}={self.num(representative_value(val))}")
         if d.get("tsas_region") is not None:
             args.append(f"tsas_region={d['tsas_region']!r}")
         if "reach_radius_nm" in d:
@@ -396,8 +379,6 @@ class _Emitter:
             if d.get(k) is False:
                 args.append(f"{k}=False")
         args.append(f"track_temporal_state={d.get('track_temporal_state', False)!r}")
-        if d.get("flyover"):
-            args.append("flyover=True")
         return f"Waypoint({', '.join(args)})"
 
     def spawn_region(self, d: dict[str, Any]) -> str:
@@ -692,7 +673,6 @@ def emit_env_sources(spec: DesignSpec, package: str | None = None) -> dict[str, 
         "wind_kts": repr(env.wind_kts),
         "turbulence_kts": repr(env.turbulence_kts),
         "gust_tau_s": repr(env.gust_tau_s),
-        "fly_arrival_times": repr(env.fly_arrival_times),
         "obs_fields": obs,
         "intruder_obs_fields": intr,
         "critic_obs_fields": critic_obs,
@@ -716,7 +696,7 @@ def _emit_sampled_waypoints(em: _Emitter, spec: DesignSpec) -> str:
 
 
 def _emit_waypoint_fields(em: _Emitter, spec: DesignSpec) -> str:
-    """Emit ``{name: {field: value|dist}}`` for per-episode waypoint constraints."""
+    """Emit ``{name: {field: value|dist}}`` for waypoint fields drawn per episode."""
     rows = []
     for name, q in spec.queryables.items():
         if not (isinstance(q, dict) and q.get("type") == "waypoint"):
@@ -729,80 +709,18 @@ def _emit_waypoint_fields(em: _Emitter, spec: DesignSpec) -> str:
     return ",\n    ".join(rows)
 
 
-def _route_sampling_metadata(spec: DesignSpec) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    for name, q in spec.queryables.items():
-        if not (isinstance(q, dict) and q.get("type") == "waypoint"):
-            continue
-        if q.get("sample") is not None and q.get("sample_per") == "aircraft":
-            out.setdefault(name, {})["sample"] = q["sample"]
-        if is_envelope_value(q.get("alt_ft")):
-            out.setdefault(name, {})["sample_alt_from_envelope"] = True
-            if (step := envelope_alt_step(q["alt_ft"])) is not None:
-                out[name]["alt_step_ft"] = step
-        elif is_start_value(q.get("alt_ft")):
-            out.setdefault(name, {})["alt_from_start"] = True
-            if (step := envelope_alt_step(q["alt_ft"])) is not None:
-                out[name]["alt_step_ft"] = step
-        if is_envelope_value(q.get("speed_kts")):
-            out.setdefault(name, {})["sample_speed_from_envelope"] = True
-        if "envelope_alt_floor_ft" in q and name in out:
-            out[name]["envelope_alt_floor_ft"] = q["envelope_alt_floor_ft"]
-        if q.get("arrival_slack_s") is not None:
-            out.setdefault(name, {})["arrival_slack_s"] = q["arrival_slack_s"]
-        if q.get("reachable_from_spawn") and out.get(name, {}).get(
-            "sample_alt_from_envelope"
-        ):
-            out[name]["reachable_from_spawn"] = True
-            if q.get("reachable_vs_fraction") is not None:
-                out[name]["reachable_vs_fraction"] = q["reachable_vs_fraction"]
-    return out
-
-
 def _spawn_with_route_sampling(spec: DesignSpec) -> dict[str, Any]:
-    route_sampling = _route_sampling_metadata(spec)
-    if not route_sampling:
-        return spec.spawn
-
-    def step_with_sampling(step):
-        if isinstance(step, str):
-            metadata = route_sampling.get(step)
-            return {"waypoint": step, **metadata} if metadata else step
-        if not isinstance(step, dict):
-            return step
-        if "waypoint" in step:
-            metadata = route_sampling.get(step["waypoint"])
-            return {**step, **metadata} if metadata else step
-        if "choice" in step:
-            return {
-                **step,
-                "choice": [
-                    [step_with_sampling(s) for s in branch]
-                    if isinstance(branch, list)
-                    else step_with_sampling(branch)
-                    for branch in step["choice"]
-                ],
-            }
-        return step
-
-    def route_with_sampling(route):
-        if not isinstance(route, list):
-            return route
-        return [step_with_sampling(step) for step in route]
-
-    spawn = dict(spec.spawn)
-    spawn["route"] = route_with_sampling(spawn.get("route"))
-    spawn["routes"] = {
-        name: _spec.with_route_steps(route, route_with_sampling)
-        for name, route in spawn.get("routes", {}).items()
+    """The design's spawn config with its route steps lowered, as the builder
+    lowers them (:func:`~.spec.lower_spawn_routes`)."""
+    samples = {
+        name: q["sample"]
+        for name, q in spec.queryables.items()
+        if isinstance(q, dict)
+        and q.get("type") == "waypoint"
+        and q.get("sample") is not None
+        and q.get("sample_per") == "aircraft"
     }
-    spawn["regions"] = [
-        {**region, "route": route_with_sampling(region.get("route"))}
-        if isinstance(region, dict)
-        else region
-        for region in spawn.get("regions", [])
-    ]
-    return spawn
+    return _spec.lower_spawn_routes(dict(spec.spawn), samples)
 
 
 def _emit_group(em: _Emitter, spec: DesignSpec, g: dict[str, Any]) -> str:

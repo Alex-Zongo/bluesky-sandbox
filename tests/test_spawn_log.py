@@ -69,11 +69,14 @@ def test_a_route_is_logged_with_its_resolved_constraints():
     scenario = _Scenario()
     region = scenario.spawn.regions[0]
     scenario.spawn = type(scenario.spawn)(
-        regions=[type(region)(**{**region.__dict__, "route": [{"waypoint": "fix", "alt_ft": 12_000, "speed_kts": 250}]})],
+        regions=[type(region)(**{**region.__dict__, "route": [{
+            "waypoint": "fix", "alt_ft": 12_000, "alt_below_ft": 500, "alt_above_ft": 0,
+            "speed_kts": 250, "speed_above_kts": 10,
+        }]})],
         aircraft_type="B744",
         conflict_free_spawn=False,
     )
-    fix = Waypoint(lat=52.0, lon=4.5, alt_tolerance_ft=500, speed_tolerance_kts=10, reach_radius_nm=3)
+    fix = Waypoint(lat=52.0, lon=4.5, reach_radius_nm=3)
     support = scenario.support
 
     def with_fix():
@@ -84,9 +87,11 @@ def test_a_route_is_logged_with_its_resolved_constraints():
     env = BlueskyEnv(scenario=scenario, config=EnvConfig(dt=5.0, obs_fields=[], action_fields=[]))
     try:
         env.reset(seed=0)
-        (target,) = env.spawn_log[0].targets
+        (logged,) = env.spawn_log[0].fixes
         assert env.spawn_log[0].route == ("fix",)
-        assert (target.lat, target.lon, target.alt_ft, target.speed_kts) == (52.0, 4.5, 12_000, 250)
-        assert (target.alt_tolerance_ft, target.speed_tolerance_kts, target.reach_radius_nm) == (500, 10, 3)
+        crossing = logged.crossing
+        assert (logged.lat, logged.lon, crossing.alt_ft, crossing.speed_kts) == (52.0, 4.5, 12_000, 250)
+        window = (crossing.alt_below_ft, crossing.alt_above_ft, crossing.speed_below_kts, crossing.speed_above_kts)
+        assert window == (500, 0, None, 10)
     finally:
         env.close()

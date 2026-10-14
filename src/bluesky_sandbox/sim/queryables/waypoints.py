@@ -13,40 +13,16 @@ from bluesky.tools.aero import nm as _M_PER_NM
 from bluesky.tools.geo import qdrdist
 
 from bluesky_sandbox.sim.bounds.coordinates import LatLon
+from bluesky_sandbox.sim.fixes import RouteFix, fix_at
 
 from bluesky_sandbox.interface.task import (
     QueryableTemporalStateUnavailable,
     StepTime,
     UnavailableStepTime,
 )
-from bluesky_sandbox.sim.performance.speeds import (
-    as_cas_ms,
-    crossover_speed_state,
-    within_speed_tolerance,
-)
+from bluesky_sandbox.sim.performance.speeds import crossover_speed_state
 
 from .base import _MIN_DYNAMIC_SCALE, _ensure_navdb_loaded, _require_bound_query_result
-
-
-@dataclass(frozen=True)
-class WaypointTarget:
-    """Configured waypoint target metadata."""
-
-    lat: float
-    lon: float
-    waypoint: str | None = None
-    alt_ft: float | None = None
-    speed_kts: float | None = None
-    reach_radius_nm: float | None = 1.0
-    alt_tolerance_ft: float | None = None
-    speed_tolerance_kts: float | None = None
-    # Optional Mach tolerance used *above* the CAS/Mach crossover altitude. When
-    # set, the speed constraint is evaluated in Mach there (matching how the
-    # aircraft is controlled/assigned at altitude) and in CAS below. When None,
-    # the constraint stays CAS everywhere (backwards-compatible).
-    speed_tolerance_mach: float | None = None
-    # Flown over, not by: the aircraft crosses the fix before it turns.
-    flyover: bool = False
 
 
 @dataclass(frozen=True)
@@ -127,7 +103,7 @@ class WaypointResult:
 
     _queryable: Any | None = field(default=None, repr=False, compare=False)
     _acidx: int | None = field(default=None, repr=False, compare=False)
-    _target_cache: WaypointTarget | None = field(
+    _target_cache: RouteFix | None = field(
         default=None, repr=False, compare=False
     )
     _current_cache: WaypointCurrent | None = field(
@@ -147,7 +123,7 @@ class WaypointResult:
         queryable: Any,
         acidx: int,
         *,
-        target: WaypointTarget | None = None,
+        target: RouteFix | None = None,
         current: WaypointCurrent | None = None,
         route: WaypointRoute | None = None,
         step: WaypointStep | UnavailableWaypointStep | None = None,
@@ -165,13 +141,14 @@ class WaypointResult:
         )
 
     @property
-    def target(self) -> WaypointTarget:
-        """Resolved waypoint target for this aircraft."""
+    def target(self) -> RouteFix:
+        """This aircraft's fix at the waypoint: as its route crosses it, or -
+        not routed through it - the place, with no crossing."""
         if self._target_cache is None:
-            queryable, _acidx = _require_bound_query_result(
+            queryable, acidx = _require_bound_query_result(
                 self._queryable, self._acidx, type(self).__name__
             )
-            self._target_cache = queryable.target
+            self._target_cache = queryable.fix_for(acidx)
         return self._target_cache
 
     @property
@@ -181,7 +158,7 @@ class WaypointResult:
             queryable, acidx = _require_bound_query_result(
                 self._queryable, self._acidx, type(self).__name__
             )
-            self._current_cache = queryable.current_state(acidx)
+            self._current_cache = queryable.current_state(acidx, self.target)
         return self._current_cache
 
     @property
@@ -208,11 +185,8 @@ class WaypointResult:
         _queryable, acidx = _require_bound_query_result(
             self._queryable, self._acidx, type(self).__name__
         )
-        nominal_ft = (
-            self.target.alt_ft
-            if self.target.alt_ft is not None
-            else float(bs.traf.alt[acidx] / ft)
-        )
+        alt_ft = self.target.crossing.alt_ft
+        nominal_ft = alt_ft if alt_ft is not None else float(bs.traf.alt[acidx] / ft)
         ceiling_ft = self.aircraft_altitude_ceiling_ft
         return max(
             abs(float(nominal_ft)),
@@ -226,11 +200,8 @@ class WaypointResult:
         _queryable, acidx = _require_bound_query_result(
             self._queryable, self._acidx, type(self).__name__
         )
-        nominal_kts = (
-            self.target.speed_kts
-            if self.target.speed_kts is not None
-            else float(bs.traf.cas[acidx] / kts)
-        )
+        speed_kts = self.target.crossing.speed_kts
+        nominal_kts = speed_kts if speed_kts is not None else float(bs.traf.cas[acidx] / kts)
         lo_kts = float(bs.traf.perf.vmin[acidx] / kts)
         hi_kts = float(bs.traf.perf.vmax[acidx] / kts)
         return max(
@@ -253,9 +224,10 @@ class WaypointResult:
         _queryable, acidx = _require_bound_query_result(
             self._queryable, self._acidx, type(self).__name__
         )
-        if self.target.speed_kts is None:
+        speed_kts = self.target.crossing.speed_kts
+        if speed_kts is None:
             return 0.0
-        state = crossover_speed_state(acidx, self.target.speed_kts * kts)
+        state = crossover_speed_state(acidx, speed_kts * kts)
         return abs(state.normalized_error)
 
 
@@ -275,13 +247,20 @@ def _point_of(at: Any) -> tuple[LatLon, str | None]:
 
 @dataclass
 class Waypoint:
-    """A BlueSky waypoint or ad-hoc navigation point used as a query target.
+    """A place aircraft are evaluated against: a BlueSky navdb fix or an
+    ad-hoc point.
 
-    Lifecycle is per-airspace, not per-flight: configure once on
-    episode queryables and every aircraft is evaluated against
-    it each step.  ``query()`` returns a :class:`WaypointResult` carrying
-    current geometry, route state, tolerance satisfaction, and step timing.
-    A merge point is just one use of this primitive.
+    Lifecycle is per-airspace, not per-flight: configure once on episode
+    queryables and every aircraft is evaluated against it each step.
+    ``query()`` returns a :class:`WaypointResult` carrying current geometry,
+    route state, and step timing. A merge point is just one use of it.
+
+    A waypoint is only where: how it is crossed - the altitude and speed flown
+    there, their windows, fly-over, an RTA - is a route's, stated on each route
+    step through it (:class:`~bluesky_sandbox.sim.fixes.Crossing`), so two
+    routes may cross one fix differently. A query answers for the aircraft
+    asking: against its own route's crossing there, or - an aircraft not
+    routed through it - geometry alone, with no altitude or speed check.
 
     Parameters
     ----------
@@ -300,35 +279,12 @@ class Waypoint:
         ``"VBG14"``).  Resolved to ``(lat, lon)`` at construction time
         via the BlueSky navigation database.  Mutually exclusive with
         :attr:`lat` / :attr:`lon`.
-    alt_ft:
-        Optional reference altitude in feet.  Drivers that have a profile
-        panel draw a marker at this altitude.  When ``None``, the
-        delta's ``alt_diff_ft`` / ``alt_diff_m`` come back as ``nan``.
-    speed_kts:
-        Optional route speed constraint in knots.  When this waypoint is
-        used in ``SpawnConfig.route`` / ``SpawnRegion.route``,
-        :class:`BlueskyBaseEnvironment` passes it to BlueSky's ``ADDWPT``
-        command as the waypoint speed field.
     reach_radius_nm:
-        Optional lateral reach radius in nautical miles. Tasks can use this
-        as metadata for rendering or task-specific goal logic; it does not
-        affect :meth:`query` directly.
-    alt_tolerance_ft:
-        Optional altitude tolerance around :attr:`alt_ft`, in feet. Like
-        :attr:`reach_radius_nm`, this is metadata for task constraints and
-        rendering; :meth:`query` still returns the raw altitude difference.
-    speed_tolerance_kts:
-        Optional speed tolerance around :attr:`speed_kts`, in knots. This is
-        metadata for task constraints and route/strip presentation.
-    speed_tolerance_mach:
-        Optional Mach tolerance used *above* the CAS/Mach crossover altitude. When
-        set, the speed constraint (``within_speed``) is evaluated in Mach there -
-        matching how aircraft are controlled and ATC-assigned at altitude - and in
-        CAS below the crossover. When ``None`` the constraint stays CAS at every
-        altitude (backwards-compatible).
+        How near the aircraft must be to it, laterally, for ``within_lateral``
+        (and ``satisfied``); ``None`` - any distance.
     color:
         Display color name passed through to drivers.  Defaults to ``"cyan"``.
-        tsas_region:
+    tsas_region:
         Optional name of another episode queryable
         (must be a :class:`QueryRegion`) used as a TSAS-strip filter:
         only aircraft inside that region appear on this waypoint's
@@ -341,7 +297,7 @@ class Waypoint:
         still allowing it to be used by query logic, routes, and TSAS.
     render_tsas:
         Whether the waypoint gets a TSAS sequencing strip.  ``None`` means
-        follow ``render_shape`` for backwards compatibility.
+        follow ``render_shape``.
     render_label:
         Whether the waypoint's name is drawn next to its map marker.
         ``True`` by default; set ``False`` to draw the marker without
@@ -349,30 +305,19 @@ class Waypoint:
     track_temporal_state:
         Whether this waypoint is sampled every physics substep to provide
         ``during_step``, accumulated ``time``, and step-minimum values.
-    flyover:
-        Whether a route through it flies over it - crossing the fix, then
-        turning onto the next leg - rather than by it, turning early to
-        join the next leg (BlueSky's default). A conventional procedure's
-        "from over" a navaid is one.
     """
 
     lat: float | None = None
     lon: float | None = None
     result_type: ClassVar[type[WaypointResult]] = WaypointResult
     waypoint: str | None = None
-    alt_ft: float | None = None
-    speed_kts: float | None = None
     reach_radius_nm: float | None = 1.0
-    alt_tolerance_ft: float | None = None
-    speed_tolerance_kts: float | None = None
-    speed_tolerance_mach: float | None = None
     color: str = "cyan"
     tsas_region: str | None = None
     render_shape: bool = True
     render_tsas: bool | None = None
     render_label: bool = True
     track_temporal_state: bool = False
-    flyover: bool = False
     at: Any = None
 
     @staticmethod
@@ -383,6 +328,9 @@ class Waypoint:
             return None
 
     def __post_init__(self) -> None:
+        self._place()
+
+    def _place(self) -> None:
         if self.at is not None:
             # Where its point is - by name, at a fix.
             center, fix = _point_of(self.at)
@@ -408,49 +356,15 @@ class Waypoint:
                 "Waypoint: must specify either `waypoint=...` or both "
                 "`lat=` and `lon=`."
             )
-    def target_from_route(self, acidx: int, route_idx: int) -> WaypointTarget:
-        """Return the concrete target stored in this aircraft's BlueSky route."""
-        routes = bs.traf.ap.route
-        if acidx < 0 or acidx >= len(routes):
-            raise IndexError(f"aircraft index {acidx} has no BlueSky route")
-        route = routes[acidx]
-        try:
-            lat = float(route.wplat[route_idx])
-            lon = float(route.wplon[route_idx])
-        except (IndexError, TypeError, ValueError) as exc:
-            raise IndexError(
-                f"route index {route_idx} is unavailable for aircraft index {acidx}"
-            ) from exc
-
-        try:
-            raw_name = route.wpname[route_idx]
-            name = raw_name.decode() if isinstance(raw_name, bytes) else str(raw_name)
-        except (IndexError, TypeError, ValueError):
-            name = None
-        try:
-            raw_alt = float(route.wpalt[route_idx])
-            alt_ft = raw_alt / ft if raw_alt >= 0.0 else None
-        except (IndexError, TypeError, ValueError):
-            alt_ft = None
-        try:
-            raw_spd = float(route.wpspd[route_idx])
-            # A Mach (a scenario's route) as its CAS at the fix's altitude.
-            at_m = float(bs.traf.alt[acidx]) if alt_ft is None else alt_ft * ft
-            speed_kts = float(as_cas_ms(raw_spd, at_m)) / kts if raw_spd >= 0.0 else None
-        except (IndexError, TypeError, ValueError):
-            speed_kts = None
-        return WaypointTarget(
-            lat=lat,
-            lon=lon,
-            waypoint=name,
-            alt_ft=alt_ft,
-            speed_kts=speed_kts,
-            reach_radius_nm=self.reach_radius_nm,
-            alt_tolerance_ft=self.alt_tolerance_ft,
-            speed_tolerance_kts=self.speed_tolerance_kts,
-            speed_tolerance_mach=self.speed_tolerance_mach,
-            flyover=self.flyover,
-        )
+    def fix_for(self, acidx: int, route_idx: int | None = None) -> RouteFix:
+        """Aircraft ``acidx``'s fix here: its route's, where its route passes
+        here (at ``route_idx``, or found on it); else the place, with no
+        crossing."""
+        route_idx = self._route_index(acidx, route_idx)
+        fix = None if route_idx is None else fix_at(acidx, route_idx)
+        if fix is not None:
+            return fix
+        return RouteFix(lat=float(self.lat), lon=float(self.lon), waypoint=self.waypoint)
 
     def _route_index(self, acidx: int, route_idx: int | None = None) -> int | None:
         if route_idx is not None:
@@ -467,8 +381,7 @@ class Waypoint:
             return None
 
         target_names = {str(self.waypoint).upper()} if self.waypoint else set()
-        target = self.target
-        tgt_lat, tgt_lon = target.lat, target.lon
+        tgt_lat, tgt_lon = float(self.lat), float(self.lon)
         names = route.wpname
         lats = route.wplat
         lons = route.wplon
@@ -546,74 +459,41 @@ class Waypoint:
         except (AttributeError, IndexError, TypeError, ValueError):
             return False
 
-    @property
-    def target(self) -> WaypointTarget:
-        return WaypointTarget(
-            lat=float(self.lat),
-            lon=float(self.lon),
-            waypoint=self.waypoint,
-            alt_ft=self.alt_ft,
-            speed_kts=self.speed_kts,
-            reach_radius_nm=self.reach_radius_nm,
-            alt_tolerance_ft=self.alt_tolerance_ft,
-            speed_tolerance_kts=self.speed_tolerance_kts,
-            speed_tolerance_mach=self.speed_tolerance_mach,
-            flyover=self.flyover,
-        )
-
-    def current_state(
-        self,
-        acidx: int,
-        target: WaypointTarget | None = None,
-    ) -> WaypointCurrent:
-        """Return current aircraft-relative waypoint state.
-
-        Uses an explicit route target when provided, else the static queryable
-        target.
-        """
+    def current_state(self, acidx: int, fix: RouteFix | None = None) -> WaypointCurrent:
+        """Aircraft ``acidx``'s state here, against ``fix`` - its own fix here
+        (:meth:`fix_for`) when not given: the geometry to the fix, and the
+        altitude and speed against its crossing."""
         lat_deg = float(bs.traf.lat[acidx])
         lon_deg = float(bs.traf.lon[acidx])
         alt_ft = float(bs.traf.alt[acidx] / ft)
-        target = target or self.target
-        qdr, dist = qdrdist(lat_deg, lon_deg, target.lat, target.lon)
-        alt_diff_ft = math.nan if target.alt_ft is None else alt_ft - target.alt_ft
+        fix = fix or self.fix_for(acidx)
+        crossing = fix.crossing
+        qdr, dist = qdrdist(lat_deg, lon_deg, fix.lat, fix.lon)
+        alt_diff_ft = math.nan if crossing.alt_ft is None else alt_ft - crossing.alt_ft
         track_error = (
             float(qdr) - float(bs.traf.trk[acidx]) + 540.0
         ) % 360.0 - 180.0
         speed_diff = (
             math.nan
-            if target.speed_kts is None
-            else float(bs.traf.cas[acidx] / _M_PER_NM * 3600.0) - target.speed_kts
+            if crossing.speed_kts is None
+            else float(bs.traf.cas[acidx] / _M_PER_NM * 3600.0) - crossing.speed_kts
         )
         # Regime-aware speed state (CAS below the crossover altitude, Mach above),
-        # computed whenever the target carries a speed constraint so the readout
-        # and the tolerance switch regimes for *any* sampled speed/altitude.
+        # computed whenever the crossing states a speed so the readout and the
+        # window switch regimes for *any* sampled speed/altitude.
         speed_diff_mach = math.nan
         speed_in_mach = False
-        if target.speed_kts is not None:
-            crossover = crossover_speed_state(acidx, target.speed_kts * kts)
+        if crossing.speed_kts is not None:
+            crossover = crossover_speed_state(acidx, crossing.speed_kts * kts)
             speed_diff_mach = crossover.mach_diff
             speed_in_mach = crossover.in_mach
         within_lateral = (
             True
-            if target.reach_radius_nm is None
-            else float(dist) <= target.reach_radius_nm
+            if self.reach_radius_nm is None
+            else float(dist) <= self.reach_radius_nm
         )
-        within_altitude = (
-            True
-            if target.alt_ft is None or target.alt_tolerance_ft is None
-            else abs(alt_diff_ft) <= target.alt_tolerance_ft
-        )
-        # Speed constraint, evaluated in the regime the aircraft is controlled in
-        # (Mach above the crossover, CAS below). The Mach tolerance defaults to the
-        # CAS tolerance converted at altitude, so a single sampled CAS tolerance
-        # stays well-defined no matter which regime the sample lands in.
-        within_speed = target.speed_kts is None or within_speed_tolerance(
-            acidx,
-            target.speed_kts * kts,
-            target.speed_tolerance_kts,
-            target.speed_tolerance_mach,
-        )
+        within_altitude = bool(crossing.within_altitude(alt_ft))
+        within_speed = crossing.within_speed(acidx)
         return WaypointCurrent(
             distance_nm=float(dist),
             bearing_deg=float(qdr),

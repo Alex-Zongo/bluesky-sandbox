@@ -187,7 +187,6 @@ export default function GeometryTab({
   const [addLat, addLon] = placementCenter(spec.airspace, [viewLat, viewLon]);
   const addAltRange = placementAltitudeRange(spec.airspace);
   const addRegionAltitude = addAltRange ? defaultConstantBand(addAltRange[0], addAltRange[1]) : undefined;
-  const addWaypointAlt = addAltRange ? (addAltRange[0] + addAltRange[1]) / 2 : undefined;
   const [spawnAltLo, spawnAltHi] = clippedSpawnAltitudeRange(spec.airspace);
 
   // ---- named bounds (shared geometry library) -----------------------------
@@ -271,7 +270,7 @@ export default function GeometryTab({
   const addWaypoint = () => {
     let qname = "";
     edit((s) => {
-      qname = addWaypointAt(s, "waypoint", addLat, addLon, undefined, addWaypointAlt);
+      qname = addWaypointAt(s, "waypoint", addLat, addLon);
     });
     if (qname) selectTarget({ scope: "queryable", name: qname });
   };

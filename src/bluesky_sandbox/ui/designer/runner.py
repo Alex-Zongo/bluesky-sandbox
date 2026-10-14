@@ -745,7 +745,7 @@ def probe_design(
 # One-shot script: run the seeded episode, every agent held still, until its
 # scheduled spawns are all up (or ``until_s``), printing each aircraft as it is
 # created - with the label the pygame view gives it and its route's resolved
-# targets - so a caller can show them as they come.
+# fixes - so a caller can show them as they come.
 _SPAWNS_TEMPLATE = '''\
 """Auto-generated spawn log of one seeded episode of a designed env."""
 from __future__ import annotations
@@ -773,21 +773,26 @@ def _plain(value):
 
 
 def _row(record, queryables):
-    row = {{k: _plain(v) for k, v in record._asdict().items() if k != "targets"}}
+    row = {{k: _plain(v) for k, v in record._asdict().items() if k != "fixes"}}
     row["route"] = list(record.route) if record.route else None
     row["label"] = aircraft_label_lines(
         record.callsign, record.actype, alt_ft=record.alt_ft, gs_kts=record.gs_kts,
         cas_kts=record.cas_kts, mach=record.mach,
     )
-    # A per-aircraft sampled target carries no name; its route step does.
+    # A per-aircraft sampled fix carries no name; its route step does.
     names = list(record.route or ())
-    row["targets"] = []
-    for i, t in enumerate(record.targets):
-        name = t.waypoint or (names[i] if i < len(names) else None)
-        row["targets"].append({{
-            **{{k: _plain(v) for k, v in dataclasses.asdict(t).items()}},
+    row["fixes"] = []
+    for i, fix in enumerate(record.fixes):
+        name = fix.waypoint or (names[i] if i < len(names) else None)
+        queryable = queryables.get(name)
+        row["fixes"].append({{
             "waypoint": name,
-            "color": getattr(queryables.get(name), "color", None),
+            "lat": fix.lat,
+            "lon": fix.lon,
+            "due_s": _plain(fix.due_s),
+            **{{k: _plain(v) for k, v in dataclasses.asdict(fix.crossing).items()}},
+            "reach_radius_nm": getattr(queryable, "reach_radius_nm", None),
+            "color": getattr(queryable, "color", None),
         }})
     return row
 
@@ -842,7 +847,7 @@ def iter_episode_spawns(
     """Run the seeded episode in a subprocess, every agent held still, until
     its scheduled aircraft are all up (or ``until_s``), yielding each aircraft
     as it is created - ``{"aircraft": {...}}``: callsign, type, time, position,
-    heading, speeds, its pygame label and its route's resolved targets - and
+    heading, speeds, its pygame label and its route's resolved fixes - and
     last ``{"done": {...}}``. Closing the iterator stops the run."""
     build_design_config(spec)
     params = {"seed": seed, "until_s": float(until_s), "max_steps": int(max_steps)}

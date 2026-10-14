@@ -28,7 +28,7 @@ pytest.importorskip("pygame")
 _FIX = LatLon(39.0955, -74.8003)
 _QUERYABLES = {
     "BOTON": Waypoint(lat=39.414472, lon=-74.454744),
-    "HOGGS": Waypoint(lat=39.582847, lon=-74.270575, alt_ft=18_000),
+    "HOGGS": Waypoint(lat=39.582847, lon=-74.270575),
 }
 
 
@@ -46,7 +46,7 @@ class _Scenario:
         )
         return EpisodeSpec(
             airspace_bounds=None,
-            spawn=SpawnConfig(regions=[region], routes={"ARRIVAL": ["BOTON", "HOGGS"]}, aircraft_type="B738"),
+            spawn=SpawnConfig(regions=[region], routes={"ARRIVAL": ["BOTON", {"waypoint": "HOGGS", "alt_ft": 18_000}]}, aircraft_type="B738"),
             queryables=dict(_QUERYABLES),
             max_aircraft=1,
         )

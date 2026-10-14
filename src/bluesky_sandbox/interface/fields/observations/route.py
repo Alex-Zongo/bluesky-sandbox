@@ -12,6 +12,7 @@ import numpy as np
 from bluesky.tools.aero import ft, kts, nm, vcas2tas
 from bluesky.tools.geo import kwikqdrdist
 
+from bluesky_sandbox.sim.fixes import fix_at
 from bluesky_sandbox.sim.performance.speeds import cas_ceiling_ms, crossover_speed_state
 
 from .._common import (
@@ -24,7 +25,6 @@ from .._common import (
     _traf_array,
 )
 from .._route import _active_route_waypoint, _route_along_distance_nm, _route_index
-from .._state import _ArrivalTimeBacked, arrival_time
 from ..base import ObsField, ObsMeta, ObsQuantity, Unit
 
 
@@ -543,14 +543,15 @@ class ActiveRouteWaypointVerticalEteS(_ActiveRouteWaypointField):
 
 
 @dataclass(frozen=True)
-class _ArrivalTimeField(_ArrivalTimeBacked, _ActiveRouteWaypointField):
-    """Reads the target arrival time over the fix at ``route_offset``, assigned
-    at spawn when the route step asks for one (``arrival_slack_s``)."""
+class _ArrivalTimeField(_ActiveRouteWaypointField):
+    """Reads the arrival time over the fix at ``route_offset``, drawn at spawn
+    when the route step asks for one (``arrival_slack_s``)."""
 
     def _time_to_go(self, idx: int) -> float | None:
         """Seconds until the aircraft is due over the fix, or ``None``."""
         k = _route_index(idx, self.route_offset)
-        due = None if k is None else arrival_time(idx, k)
+        fix = None if k is None else fix_at(idx, k)
+        due = None if fix is None else fix.due_s
         return None if due is None else due - float(bs.sim.simt)
 
     def _times_to_go(self, indices: np.ndarray) -> np.ndarray:

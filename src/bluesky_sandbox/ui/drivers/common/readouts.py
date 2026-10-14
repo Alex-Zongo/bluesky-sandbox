@@ -9,16 +9,17 @@ import bluesky as bs
 from bluesky.tools.aero import ft, kts, vcas2mach
 
 from bluesky_sandbox.interface.fields._route import _active_route_waypoint
-from bluesky_sandbox.interface.fields._state import arrival_time
 from bluesky_sandbox.interface.fields.observations import (
     ActiveRouteWaypointArrivalErrorS,
 )
 from bluesky_sandbox.interface.task import (
     AircraftReadoutItem,
     WaypointReadoutItem,
+    WaypointReadoutKey,
     aircraft_readout_items,
 )
-from bluesky_sandbox.sim.performance.speeds import as_cas_ms, crossover_display, selected_cas_ms
+from bluesky_sandbox.sim.fixes import ROUTES, fix_at
+from bluesky_sandbox.sim.performance.speeds import crossover_display, selected_cas_ms
 
 
 #: Above this altitude a label gives Mach, the speed flown there; below, CAS.
@@ -183,7 +184,8 @@ class AircraftReadoutMixin:
         target_kts: float | None = None,
         min_kts: float | None = None,
         max_kts: float | None = None,
-        tolerance_kts: float | None = None,
+        below_kts: float | None = None,
+        above_kts: float | None = None,
         alt_ft: float | None = None,
         scheduled: bool = False,
     ) -> list[str]:
@@ -224,24 +226,39 @@ class AircraftReadoutMixin:
                 lines.append(f"MACH {to_mach(target_kts):.2f}")
             else:
                 lines.append(f"CAS  {int(round(float(target_kts))):>3} KT")
-            if tolerance_kts is not None:
+            if below_kts is not None or above_kts is not None:
                 if in_mach:
-                    # Half the Mach span across the CAS tolerance band. The upper
-                    # edge caps at Mmo above the crossover, so a symmetric span
-                    # (vs. target+tol alone) still yields a meaningful width.
-                    band = abs(
-                        to_mach(float(target_kts) + float(tolerance_kts))
-                        - to_mach(float(target_kts) - float(tolerance_kts))
-                    ) / 2.0
-                    # Omit rather than show "+/-0.00 M" when the whole CAS band
-                    # sits above Mmo (target pinned at the Mach ceiling).
-                    if round(band, 2) > 0.0:
-                        lines.append(f"SPD  +/-{band:.2f} M")
+                    # The window's sides as Mach at the fix; the upper caps at
+                    # Mmo above the crossover.
+                    target_mach = to_mach(float(target_kts))
+                    below = None if below_kts is None else target_mach - to_mach(float(target_kts) - float(below_kts))
+                    above = None if above_kts is None else to_mach(float(target_kts) + float(above_kts)) - target_mach
+                    lines.append(f"SPD  {self.format_window(below, above, 'M', '.2f', 'speed')}")
                 else:
-                    lines.append(f"SPD  +/-{int(round(float(tolerance_kts)))} KT")
+                    lines.append(f"SPD  {self.format_window(below_kts, above_kts, 'KT', quantity='speed')}")
         if scheduled and lines:
             lines[0] += " TBO"
         return lines
+
+    #: How a one-sided window reads - "at or above", "or less" - by quantity.
+    WINDOW_WORDS = {"alt": ("AT OR ABOVE", "AT OR BELOW"), "speed": ("OR MORE", "OR LESS")}
+
+    @classmethod
+    def format_window(
+        cls, below: float | None, above: float | None, unit: str, fmt: str = ".0f", quantity: str = "alt"
+    ) -> str:
+        """A window about a fix's value, as a label shows it: one side at the
+        value and the other open in words ("AT OR ABOVE" a level, "OR LESS" a
+        speed), else how far below and above it reaches ("-500/+500 FT"), an
+        open side "--"."""
+        up, down = cls.WINDOW_WORDS[quantity]
+        if below == 0 and above is None:
+            return up
+        if above == 0 and below is None:
+            return down
+        low = "--" if below is None else f"-{float(below):{fmt}}"
+        high = "--" if above is None else f"+{float(above):{fmt}}"
+        return f"{low}/{high} {unit}"
 
     @staticmethod
     def format_waypoint_time_lines(wp: dict) -> list[str]:
@@ -325,8 +342,6 @@ class AircraftReadoutMixin:
             names = route.wpname
             lats = route.wplat
             lons = route.wplon
-            alts = route.wpalt
-            speeds = route.wpspd
             active_idx = int(route.iactwp or 0)
 
             for wp_idx in range(nwp):
@@ -348,22 +363,11 @@ class AircraftReadoutMixin:
                     name = name.strip()
                 except (IndexError, TypeError, ValueError):
                     pass
-                alt_ft = None
-                try:
-                    alt_m = float(alts[wp_idx])
-                    if math.isfinite(alt_m) and alt_m > 0.0:
-                        alt_ft = alt_m / ft
-                except (IndexError, TypeError, ValueError):
-                    pass
-                speed_kts = None
-                try:
-                    speed_ms = float(speeds[wp_idx])
-                    if math.isfinite(speed_ms) and speed_ms >= 0.0:
-                        # A Mach (a scenario's route) as its CAS at the fix.
-                        at_m = float(bs.traf.alt[idx]) if alt_ft is None else alt_ft * ft
-                        speed_kts = float(as_cas_ms(speed_ms, at_m)) / kts
-                except (IndexError, TypeError, ValueError):
-                    pass
+                design_wp = self._route_waypoint(idx, wp_idx, name, lat, lon)
+                fix = fix_at(idx, wp_idx)
+                crossing = fix.crossing if fix is not None else None
+                alt_ft = None if crossing is None else crossing.alt_ft
+                speed_kts = None if crossing is None else crossing.speed_kts
                 reached = wp_idx < active_idx
                 # Ahead of the aircraft, the fix as the library reads it: a
                 # speed its arrival time implies where it has no gate, and how
@@ -372,10 +376,10 @@ class AircraftReadoutMixin:
                 arrival_error_s = None
                 if wp_idx >= active_idx:
                     offset = wp_idx - active_idx
-                    fix = _active_route_waypoint(idx, offset)
-                    if speed_kts is None and fix is not None and fix[3] is not None:
-                        speed_kts, scheduled = fix[3] / kts, True
-                    if arrival_time(idx, wp_idx) is not None:
+                    ahead = _active_route_waypoint(idx, offset)
+                    if speed_kts is None and ahead is not None and ahead[3] is not None:
+                        speed_kts, scheduled = ahead[3] / kts, True
+                    if fix is not None and fix.due_s is not None:
                         arrival_error_s = float(
                             ActiveRouteWaypointArrivalErrorS(route_offset=offset).get(idx)
                         )
@@ -393,7 +397,10 @@ class AircraftReadoutMixin:
                         "active": wp_idx == active_idx,
                         "reached": reached,
                         "future": wp_idx >= active_idx and not reached,
-                        "render_label": self._route_label_shown(name, lat, lon),
+                        "render_label": bool(getattr(design_wp, "render_label", True)),
+                        # Its crossing's windows, as constraints to show; a
+                        # design's own readouts below may replace them.
+                        "constraints": self._route_windows(crossing),
                     }
                 )
 
@@ -407,11 +414,14 @@ class AircraftReadoutMixin:
 
         return waypoints
 
-    def _route_label_shown(self, name: str, lat: float, lon: float) -> bool:
-        """Whether a route fix is labelled: its waypoint's ``render_label`` -
-        the waypoint named so, else (a fix BlueSky named itself, given by
-        position) the one there - and labelled where it is no design's."""
+    def _route_waypoint(self, idx: int, wp_idx: int, name: str, lat: float, lon: float):
+        """The design's waypoint a route fix is: the one its route names there,
+        else the one named so, else (a fix BlueSky named itself, given by
+        position) the one there; ``None`` for a fix that is no design's."""
         queryables = getattr(self._env, "episode_queryables", None) or {}
+        route = ROUTES.route(idx)
+        if route is not None and wp_idx < len(route.names) and route.names[wp_idx] in queryables:
+            return queryables[route.names[wp_idx]]
         wp = queryables.get(name)
         if wp is None:
             wp = next(
@@ -424,7 +434,19 @@ class AircraftReadoutMixin:
                 ),
                 None,
             )
-        return bool(getattr(wp, "render_label", True))
+        return wp
+
+    @staticmethod
+    def _route_windows(crossing) -> dict:
+        """A route fix's crossing's windows - how far below and above its
+        altitude and speed - as the readout keys drivers show."""
+        keys = (
+            (WaypointReadoutKey.ALT_BELOW_FT, "alt_below_ft"),
+            (WaypointReadoutKey.ALT_ABOVE_FT, "alt_above_ft"),
+            (WaypointReadoutKey.SPEED_BELOW_KTS, "speed_below_kts"),
+            (WaypointReadoutKey.SPEED_ABOVE_KTS, "speed_above_kts"),
+        )
+        return {key: getattr(crossing, attr) for key, attr in keys if getattr(crossing, attr, None) is not None}
 
     @staticmethod
     def _readout_target_waypoint(

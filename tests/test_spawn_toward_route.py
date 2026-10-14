@@ -21,7 +21,7 @@ from bluesky_sandbox.ui.designer.spec import dump_value, load_value
 
 _SIE = LatLon(39.0955, -74.80033333)
 _QUERYABLES = {
-    "SIE": Waypoint(lat=_SIE.lat_deg, lon=_SIE.lon_deg, flyover=True),
+    "SIE": Waypoint(lat=_SIE.lat_deg, lon=_SIE.lon_deg),
     "BOTON": Waypoint(lat=39.414472, lon=-74.454744),
 }
 
@@ -63,7 +63,7 @@ class _Scenario:
     def support(self):
         return EpisodeSpec(
             airspace_bounds=None,
-            spawn=SpawnConfig(regions=[_arc(route=["SIE", "BOTON"])], aircraft_type="B738"),
+            spawn=SpawnConfig(regions=[_arc(route=[{"waypoint": "SIE", "flyover": True}, "BOTON"])], aircraft_type="B738"),
             queryables=dict(_QUERYABLES),
             max_aircraft=4,
         )

@@ -1,6 +1,6 @@
 // Editor for a single queryable (goal/restricted region or waypoint). The body
 // is exposed as `QueryableBody` (used by the geometry inspector) grouped into
-// Shape/Position · Constraints · Appearance · Advanced sub-groups; `QueryableCard`
+// Shape/Position · Reach · Appearance · Advanced sub-groups; `QueryableCard`
 // wraps that body in a collapsible card for any legacy list view.
 import type { SpecDict } from "../../api";
 import ShapeEditor, { NumField } from "../ShapeEditor";
@@ -8,7 +8,7 @@ import { CollapsibleCard, EyeToggle } from "./Section";
 import { FieldGroup } from "./FieldGroup";
 import { Picker } from "./Picker";
 import { ColorPicker } from "./ColorPicker";
-import { NumInput, OptValueField } from "./ValueField";
+import { OptValueField } from "./ValueField";
 
 type QueryableBodyProps = {
   name: string;
@@ -89,21 +89,17 @@ export function QueryableBody({
             onFocus={onFocus}
           />
         </FieldGroup>
-        <FieldGroup title="Constraints">
-          <WaypointConstraints q={q} onChange={onChange} />
-          <label className="radio">
-            <input
-              type="checkbox"
-              checked={q.flyover === true}
-              onChange={(e) => {
-                const { flyover: _, ...rest } = q;
-                onChange(e.target.checked ? { ...rest, flyover: true } : rest);
-              }}
-            />
-            fly over
-          </label>
+        <FieldGroup title="Reach">
+          <OptValueField
+            label="reach radius nm"
+            hint="How near an aircraft must pass to have reached it"
+            step={0.1}
+            value={q.reach_radius_nm}
+            defaultValue={1}
+            onChange={(v) => onChange({ ...q, reach_radius_nm: v })}
+          />
           <div className="muted small">
-            A route crosses the fix before it turns, rather than turning early to join the next leg.
+            How each route crosses it - altitude, speed, fly-over, arrival time - is set on the route's step.
           </div>
         </FieldGroup>
         {appearance}
@@ -259,204 +255,6 @@ function WaypointPosition({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Optional crossing constraints for a waypoint: altitude (and tolerance), speed
-// (and tolerance, both requiring altitude), and reach radius.
-function WaypointConstraints({ q, onChange }: { q: SpecDict; onChange: (q: SpecDict) => void }) {
-  const altitudeEnabled = q.alt_ft != null;
-  const speedRequiresAltitude = q.speed_kts != null && q.alt_ft == null;
-  return (
-    <div>
-      <OptValueField
-        label="alt ft"
-        step={500}
-        allowEnvelope
-        allowStart
-        altLevels
-        value={q.alt_ft}
-        defaultValue={3000}
-        onChange={(v) => {
-          const next = { ...q };
-          if (v == null) {
-            delete next.alt_ft;
-            delete next.alt_tolerance_ft;
-            delete next.speed_kts;
-            delete next.speed_tolerance_kts;
-            delete next.reachable_from_spawn;
-            delete next.reachable_vs_fraction;
-            onChange(next);
-            return;
-          }
-          next.alt_ft = v;
-          // reachable-from-spawn only applies to an envelope-sampled altitude.
-          if (typeof v !== "object" || v.type !== "envelope") {
-            delete next.reachable_from_spawn;
-            delete next.reachable_vs_fraction;
-          }
-          onChange(next);
-        }}
-      />
-      {typeof q.alt_ft === "object" && q.alt_ft?.type === "envelope" && (
-        <>
-          <label className="radio">
-            <input
-              type="checkbox"
-              checked={q.reachable_from_spawn === true}
-              onChange={(e) => {
-                const next = { ...q };
-                if (e.target.checked) {
-                  next.reachable_from_spawn = true;
-                } else {
-                  delete next.reachable_from_spawn;
-                  delete next.reachable_vs_fraction;
-                }
-                onChange(next);
-              }}
-            />
-            reachable from spawn
-          </label>
-          <div className="muted small">
-            Bounds the per-aircraft envelope altitude to what the aircraft can
-            climb/descend to before reaching the fix (from its max vertical rate
-            and distance to go), so every episode is altitude-feasible.
-          </div>
-          {q.reachable_from_spawn === true && (
-            <>
-              <div className="value-field">
-                <div className="vf-head">
-                  <span className="vf-label">vs fraction</span>
-                  <span className="vf-spacer" />
-                  <NumInput
-                    className="vf-input"
-                    step={0.05}
-                    value={
-                      typeof q.reachable_vs_fraction === "number"
-                        ? q.reachable_vs_fraction
-                        : 1
-                    }
-                    onChange={(v) => {
-                      const next = { ...q };
-                      // 1.0 is the runtime default -> omit; store only a tighter
-                      // margin (validation requires 0 < f <= 1).
-                      if (Number.isFinite(v) && v > 0 && v < 1) {
-                        next.reachable_vs_fraction = v;
-                      } else {
-                        delete next.reachable_vs_fraction;
-                      }
-                      onChange(next);
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="muted small">
-                Fraction of max climb/descent rate to assume (0–1, default 1).
-                Lower reserves margin for the turn-to-fix and speed matching.
-              </div>
-            </>
-          )}
-        </>
-      )}
-      <OptValueField
-        label="speed kt"
-        step={5}
-        allowEnvelope
-        value={q.speed_kts}
-        defaultValue={220}
-        disabled={!altitudeEnabled}
-        disabledReason="enable altitude before setting a waypoint speed"
-        onChange={(v) => {
-          if (v == null) {
-            const next = { ...q };
-            delete next.speed_kts;
-            delete next.speed_tolerance_kts;
-            onChange(next);
-            return;
-          }
-          if (q.alt_ft == null) return;
-          onChange({ ...q, speed_kts: v });
-        }}
-      />
-      {speedRequiresAltitude && (
-        <div className="error-text small">waypoint speed requires altitude</div>
-      )}
-      <OptValueField
-        label="reach radius nm"
-        step={0.1}
-        value={q.reach_radius_nm}
-        defaultValue={1}
-        onChange={(v) => onChange({ ...q, reach_radius_nm: v })}
-      />
-      {altitudeEnabled && (
-        <OptValueField
-          label="alt tol ft"
-          step={100}
-          value={q.alt_tolerance_ft}
-          onChange={(v) => onChange({ ...q, alt_tolerance_ft: v })}
-        />
-      )}
-      <OptValueField
-        label="speed tol kt"
-        step={5}
-        value={q.speed_tolerance_kts}
-        defaultValue={20}
-        disabled={!altitudeEnabled}
-        disabledReason="enable altitude before setting speed tolerance"
-        onChange={(v) => {
-          if (v == null) {
-            const next = { ...q };
-            delete next.speed_tolerance_kts;
-            onChange(next);
-            return;
-          }
-          if (q.alt_ft == null) return;
-          onChange({ ...q, speed_tolerance_kts: v });
-        }}
-      />
-      <OptValueField
-        label="speed tol M"
-        step={0.01}
-        value={q.speed_tolerance_mach}
-        defaultValue={0.02}
-        disabled={!altitudeEnabled}
-        disabledReason="enable altitude before setting speed tolerance"
-        onChange={(v) => {
-          if (v == null) {
-            const next = { ...q };
-            delete next.speed_tolerance_mach;
-            onChange(next);
-            return;
-          }
-          if (q.alt_ft == null) return;
-          onChange({ ...q, speed_tolerance_mach: v });
-        }}
-      />
-      <div className="muted small">
-        Optional Mach tolerance, applied above the CAS/Mach crossover altitude.
-        Leave unset to auto-derive it from “speed tol kt” there, so a single CAS
-        tolerance stays well-defined at any sampled altitude.
-      </div>
-      <OptValueField
-        label="arrival slack s"
-        hint="A target arrival time over this fix, for every aircraft whose route crosses it"
-        step={10}
-        value={q.arrival_slack_s}
-        defaultValue={{ type: "range", low: 0, high: 120 }}
-        onChange={(v) => {
-          const next = { ...q };
-          if (v == null) delete next.arrival_slack_s;
-          else next.arrival_slack_s = v;
-          onChange(next);
-        }}
-      />
-      <div className="muted small">
-        Each aircraft is due over the fix at its nominal time from where it
-        spawns - flown at its spawn speed, or its climb or descent at full rate if
-        longer - plus this slack, drawn per aircraft. Never sooner than it can fly
-        flat out. Observed through the ActiveRouteWaypoint arrival fields.
-      </div>
     </div>
   );
 }

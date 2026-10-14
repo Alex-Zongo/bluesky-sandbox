@@ -112,8 +112,8 @@ from bluesky_sandbox.sim.queryables import (
     WaypointResult,
     WaypointRoute,
     WaypointStep,
-    WaypointTarget,
 )
+from bluesky_sandbox.sim.fixes import Crossing, RouteFix
 from bluesky_sandbox.sim.sampling.distributions import (
     Categorical,
     CountDistribution,
@@ -152,6 +152,7 @@ __all__ = [
     "ControlAxis",
     "CorridorFootprint",
     "CountDistribution",
+    "Crossing",
     "DesiredGoalFn",
     "DiskFootprint",
     "EnvActionField",
@@ -185,6 +186,7 @@ __all__ = [
     "RegionResult",
     "RegionStep",
     "RewardFn",
+    "RouteFix",
     "Scenario",
     "SectorFootprint",
     "SeparationContext",
@@ -218,7 +220,6 @@ __all__ = [
     "WaypointResult",
     "WaypointRoute",
     "WaypointStep",
-    "WaypointTarget",
     "action_layout",
     "actions",
     "actor_obs",

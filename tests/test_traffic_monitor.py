@@ -168,9 +168,9 @@ def test_detection_is_reprocessed_once_per_detector_run_not_per_substep():
 
 
 def test_a_waypoint_reach_is_still_recorded_when_the_route_walk_is_skipped():
-    merge = Waypoint(lat=52.0, lon=4.62, alt_ft=8_300, track_temporal_state=True)
+    merge = Waypoint(lat=52.0, lon=4.62, track_temporal_state=True)
     env = BlueskyEnv(
-        scenario=_Scenario(6, route=["merge"], queryables={"merge": merge}),
+        scenario=_Scenario(6, route=[{"waypoint": "merge", "alt_ft": 8_300}], queryables={"merge": merge}),
         config=_config(),
     )
     monitor = env._query_state_monitor

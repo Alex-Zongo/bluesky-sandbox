@@ -21,6 +21,7 @@ from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.sim.arrival import arrival_times
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
+from bluesky_sandbox.sim.fixes import Crossing, RouteFix
 from bluesky_sandbox.sim.queryables import Waypoint
 from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
@@ -144,14 +145,14 @@ def test_no_fix_is_due_sooner_than_the_aircraft_can_fly_it():
 def test_a_big_level_change_on_a_short_leg_sets_the_time(timed):
     timed.reset(seed=0)
     idx = 0
-    near = Waypoint(lat=float(bs.traf.lat[idx]), lon=float(bs.traf.lon[idx]) + 0.05)
-    deep = Waypoint(
-        lat=near.lat, lon=near.lon, alt_ft=float(bs.traf.alt[idx]) / ft - 10_000
+    near = RouteFix(lat=float(bs.traf.lat[idx]), lon=float(bs.traf.lon[idx]) + 0.05)
+    deep = RouteFix(
+        lat=near.lat, lon=near.lon, crossing=Crossing(alt_ft=float(bs.traf.alt[idx]) / ft - 10_000)
     )
     now = float(bs.sim.simt)
     rng = np.random.default_rng(0)
-    (flat,) = arrival_times(idx, [near.target], [0.0], rng, now)
-    (descend,) = arrival_times(idx, [deep.target], [0.0], rng, now)
+    (flat,) = arrival_times(idx, [near], [0.0], rng, now)
+    (descend,) = arrival_times(idx, [deep], [0.0], rng, now)
     descent_s = 10_000 * ft / abs(float(bs.traf.perf.vsmin[idx]))
     assert flat - now < descent_s
     assert descend - now == pytest.approx(descent_s)

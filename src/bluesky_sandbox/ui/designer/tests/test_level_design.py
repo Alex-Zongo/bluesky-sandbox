@@ -1,6 +1,6 @@
 """Flight levels in a design, each set where it applies - nothing global fills
 anything in: an envelope or start altitude's ``alt_step_ft`` (a spawn's, a
-fix's), an action's ``grid``, a step normalizer's ``step``. Each
+route step's), an action's ``grid``, a step normalizer's ``step``. Each
 survives the saved design, reaches the env, and is generated as written."""
 
 from __future__ import annotations
@@ -20,23 +20,14 @@ LEVELS = {"type": "envelope", "alt_step_ft": 1000.0}
 
 def _on_levels() -> S.DesignSpec:
     spec = _example_design_spec()
-    spec.queryables = {
-        "fix": {
-            "type": "waypoint",
-            "lat": 56.0,
-            "lon": 2.0,
-            "alt_ft": dict(LEVELS),
-            "speed_kts": None,
-            "alt_tolerance_ft": 1000,
-        }
-    }
-    spec.spawn["route"] = ["fix"]
+    spec.queryables = {"fix": {"type": "waypoint", "lat": 56.0, "lon": 2.0}}
+    spec.spawn["route"] = [{"waypoint": "fix", "alt_ft": dict(LEVELS), "alt_below_ft": 1000, "alt_above_ft": 1000}]
     return spec
 
 
 def test_a_level_grid_survives_the_saved_design():
     again = S.DesignSpec.from_json(_on_levels().to_json())
-    assert again.queryables["fix"]["alt_ft"] == LEVELS
+    assert again.spawn["route"][0]["alt_ft"] == LEVELS
     assert S.dump_value(S.load_value(dict(LEVELS))) == LEVELS
     assert S.load_value(dict(LEVELS)) == EnvelopeSample(alt_step_ft=1000.0)
 
@@ -58,15 +49,8 @@ def test_levels_are_generated():
 
 def _cruise() -> S.DesignSpec:
     spec = _on_levels()
-    spec.queryables["cruise"] = {
-        "type": "waypoint",
-        "lat": 56.0,
-        "lon": 2.5,
-        "alt_ft": {"type": "start", "alt_step_ft": 1000.0},
-        "speed_kts": None,
-        "alt_tolerance_ft": 1000,
-    }
-    spec.spawn["route"] = ["cruise"]
+    spec.queryables["cruise"] = {"type": "waypoint", "lat": 56.0, "lon": 2.5}
+    spec.spawn["route"] = [{"waypoint": "cruise", "alt_ft": {"type": "start", "alt_step_ft": 1000.0}}]
     region = spec.spawn["regions"][0]
     region.setdefault("params", {})["alt_ft"] = dict(LEVELS)
     return spec
@@ -84,7 +68,7 @@ def test_level_flight_holds_the_level_it_starts_on():
     (step,) = build_scenario(_cruise()).support().spawn.route
     assert step["alt_from_start"] is True and step["alt_step_ft"] == 1000.0
     again = S.DesignSpec.from_json(_cruise().to_json())
-    assert again.queryables["cruise"]["alt_ft"] == {"type": "start", "alt_step_ft": 1000.0}
+    assert again.spawn["route"][0]["alt_ft"] == {"type": "start", "alt_step_ft": 1000.0}
 
 
 def test_a_spawn_on_levels_is_drawn_on_levels_and_generated():

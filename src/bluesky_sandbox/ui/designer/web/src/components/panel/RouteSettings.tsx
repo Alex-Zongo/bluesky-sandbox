@@ -10,6 +10,8 @@ import { CollapsibleCard, EyeToggle } from "./Section";
 import { Picker } from "./Picker";
 import { ColorPicker } from "./ColorPicker";
 import { type NamedRoute, routeColor, routeSteps, withRouteColor, withRouteSteps } from "../../route/namedRoute";
+import { type Choice, type RouteStep, type WpStep, isChoice, isSubroute, isWpStep, stepName } from "../../route/routeGraph";
+import { CrossingEditor, crossingSummary, stepOrName } from "./CrossingEditor";
 
 function waypointRouteFallback(waypointNames: string[]): string[] {
   return waypointNames.length ? [waypointNames[0]] : [];
@@ -76,23 +78,11 @@ function removeRouteRef(route: any, name: string): any {
   return route;
 }
 
-// A route step is a waypoint name (string), a subroute reference {route: name}
-// expanded inline, or a branch {choice: [option, ...]} where one option is taken
-// (weighted; uniform if no weights). An option is itself an ordered step list, so
-// branches diverge (SID transitions) or merge (STAR entries onto a shared trunk).
-type Choice = { choice: RouteStep[][]; weights?: number[] };
-// A constrained waypoint step carries a route-local crossing restriction that
-// overrides the waypoint's own speed/altitude on this route only.
-type WpStep = { waypoint: string; speed_kts?: number; alt_ft?: number };
-type RouteStep = string | { route: string } | Choice | WpStep;
-const isSubroute = (s: RouteStep): s is { route: string } =>
-  typeof s === "object" && s != null && typeof (s as any).route === "string";
-const isChoice = (s: RouteStep): s is Choice =>
-  typeof s === "object" && s != null && Array.isArray((s as any).choice);
-const isWpStep = (s: RouteStep): s is WpStep =>
-  typeof s === "object" && s != null && typeof (s as any).waypoint === "string";
-const stepName = (s: RouteStep): string => (isWpStep(s) ? s.waypoint : (s as string));
-
+// A route step is a waypoint name (string), a {waypoint, ...crossing} step, a
+// subroute reference {route: name} expanded inline, or a branch {choice: [option,
+// ...]} where one option is taken (weighted; uniform if no weights). An option is
+// itself an ordered step list, so branches diverge (SID transitions) or merge
+// (STAR entries onto a shared trunk).
 function RouteWaypointPicker({
   route,
   waypointNames,
@@ -189,10 +179,8 @@ function RouteWaypointPicker({
   );
 }
 
-// A waypoint step chip. A bare name inherits the waypoint's own speed/altitude;
-// the ⚙ toggle adds a route-local crossing restriction ({waypoint, speed_kts,
-// alt_ft}) that overrides them on this route only. Clearing both reverts to the
-// bare name so the spec stays minimal.
+// A waypoint step chip. The ⚙ toggle edits how this route crosses the fix; a
+// step stating nothing reverts to the bare name so the spec stays minimal.
 function WaypointStepChip({
   step,
   seq,
@@ -210,39 +198,19 @@ function WaypointStepChip({
   onRemove: () => void;
   onChange: (next: string | WpStep) => void;
 }) {
-  const over = isWpStep(step) ? step : null;
   const name = stepName(step);
-  const [editing, setEditing] = useState(over != null);
-  const [error, setError] = useState<string | null>(null);
-  const setField = (key: "speed_kts" | "alt_ft", value: number | undefined) => {
-    const next: WpStep = { waypoint: name };
-    const speed = key === "speed_kts" ? value : over?.speed_kts;
-    const alt = key === "alt_ft" ? value : over?.alt_ft;
-    if (speed != null && Number.isFinite(speed) && (alt == null || !Number.isFinite(alt))) {
-      setError("speed requires altitude");
-      return;
-    }
-    setError(null);
-    if (speed != null && Number.isFinite(speed)) next.speed_kts = speed;
-    if (alt != null && Number.isFinite(alt)) next.alt_ft = alt;
-    // No restriction left -> revert to the bare name.
-    onChange(next.speed_kts == null && next.alt_ft == null ? name : next);
-  };
-  const badge =
-    over && (over.speed_kts != null || over.alt_ft != null)
-      ? [over.speed_kts != null ? `${over.speed_kts}kt` : null, over.alt_ft != null ? `${over.alt_ft}ft` : null]
-          .filter(Boolean)
-          .join(" ")
-      : null;
+  const over: WpStep = isWpStep(step) ? step : { waypoint: name };
+  const [editing, setEditing] = useState(false);
+  const badge = crossingSummary(over);
   return (
     <>
-      <span className={`chip route-chip${over ? " constrained-chip" : ""}`}>
+      <span className={`chip route-chip${badge ? " constrained-chip" : ""}`}>
         <span className="route-seq">{seq}</span>
         <span className="route-name">{name}</span>
-        {badge && <span className="route-xing" title="crossing restriction">{badge}</span>}
+        {badge && <span className="route-xing" title="how this route crosses it">{badge}</span>}
         <button
           className={`chip-cfg${editing ? " on" : ""}`}
-          title="crossing restriction (speed / altitude)"
+          title="how this route crosses it"
           onClick={() => setEditing((v) => !v)}
         >
           ⚙
@@ -253,38 +221,8 @@ function WaypointStepChip({
       </span>
       {editing && (
         <div className="route-xing-edit">
-          <span className="muted small">cross {name} at</span>
-          {error && <span className="error-text small">{error}</span>}
-          <label className="xing-field" title="route-local speed restriction">
-            spd
-            <input
-              type="number"
-              min={0}
-              step={5}
-              key={`spd-${over?.speed_kts ?? ""}`}
-              defaultValue={over?.speed_kts ?? ""}
-              placeholder="kt"
-              onBlur={(e) => {
-                const t = e.target.value.trim();
-                setField("speed_kts", t === "" ? undefined : Number(t));
-              }}
-            />
-          </label>
-          <label className="xing-field" title="route-local altitude restriction">
-            alt
-            <input
-              type="number"
-              min={0}
-              step={500}
-              key={`alt-${over?.alt_ft ?? ""}`}
-              defaultValue={over?.alt_ft ?? ""}
-              placeholder="ft"
-              onBlur={(e) => {
-                const t = e.target.value.trim();
-                setField("alt_ft", t === "" ? undefined : Number(t));
-              }}
-            />
-          </label>
+          <span className="muted small">cross {name}</span>
+          <CrossingEditor step={over} onChange={(next) => onChange(stepOrName(next) as string | WpStep)} />
         </div>
       )}
     </>

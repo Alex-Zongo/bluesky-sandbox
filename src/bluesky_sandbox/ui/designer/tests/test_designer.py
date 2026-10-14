@@ -27,6 +27,7 @@ import traceback
 from pathlib import Path
 
 import bluesky as bs
+from bluesky.tools.aero import kts
 import numpy as np
 from scipy.stats import poisson, randint, truncnorm
 
@@ -159,20 +160,9 @@ def test_bounds_and_queryables_roundtrip():
     region = QueryRegion(bounds, color="cyan", render_shape=False, render_label=False)
     _roundtrip(region)
 
-    wp_coords = Waypoint(
-        lat=52.0,
-        lon=4.5,
-        alt_ft=3_000,
-        speed_kts=220,
-        reach_radius_nm=1.2,
-        alt_tolerance_ft=500,
-        speed_tolerance_kts=20,
-        color="magenta",
-    )
+    wp_coords = Waypoint(lat=52.0, lon=4.5, reach_radius_nm=1.2, color="magenta")
     reloaded_wp = _roundtrip(wp_coords)
-    assert reloaded_wp.reach_radius_nm == 1.2
-    assert reloaded_wp.alt_tolerance_ft == 500
-    assert reloaded_wp.speed_tolerance_kts == 20
+    assert reloaded_wp.reach_radius_nm == 1.2 and reloaded_wp.color == "magenta"
 
     wp_named = Waypoint(waypoint="EKROS")
     d = S.dump(wp_named)
@@ -390,7 +380,7 @@ def test_group_transform():
           scale={"type": "range", "low": 0.9, "high": 1.1})
 
     # A fixed lat/lon waypoint joins a group directly via "wp:<name>".
-    spec.queryables["wp"] = {"type": "waypoint", "lat": 52.0, "lon": 4.7, "alt_ft": 3000}
+    spec.queryables["wp"] = {"type": "waypoint", "lat": 52.0, "lon": 4.7}
     spec.transform = {"groups": [{"id": "g1", "name": "g", "members": ["wp:wp"],
                                   "parent": None, "pivot": None, "translation": {"north_nm": 60.0}}]}
     wp = build_scenario(spec).sample(np.random.default_rng(0)).queryables["wp"]
@@ -404,7 +394,7 @@ def test_sampled_waypoint():
     spec = _example_design_spec()
     box = {"type": "box", "lat_min_deg": 51.8, "lat_max_deg": 52.2,
            "lon_min_deg": 4.4, "lon_max_deg": 5.0}
-    spec.queryables["wp"] = {"type": "waypoint", "sample": box, "alt_ft": 3000}
+    spec.queryables["wp"] = {"type": "waypoint", "sample": box}
     scenario = build_scenario(spec)
     assert list(scenario.sampled_waypoints) == ["wp"]
     # support = region center
@@ -437,21 +427,23 @@ def test_named_region_refs():
                  "altitude": {"type": "constant", "min_ft": 2000, "max_ft": 9000}},
     }
     spec.queryables["goal"] = {"type": "query_region", "bounds": {"ref": "core"}}
-    spec.queryables["wp"] = {"type": "waypoint", "sample": {"ref": "core"}, "alt_ft": 5000}
+    spec.queryables["wp"] = {"type": "waypoint", "sample": {"ref": "core"}}
     spec.spawn["regions"][0]["bounds"] = {"ref": "core"}
+    # The route states the altitude it crosses it at - the region's band does not.
+    spec.spawn["regions"][0]["route"] = [{"waypoint": "wp", "alt_ft": 5000}]
     # json round-trip preserves the regions table
     assert S.DesignSpec.from_json(spec.to_json()).regions == spec.regions
     scenario = build_scenario(spec)
     core_bbox = ((51.8, 52.2), (4.4, 5.0))
     assert scenario.support().queryables["goal"].bounds.bounding_box == core_bbox
-    # the sampled waypoint draws lat/lon AND altitude from the named region's band
-    alts = set()
+    # the sampled waypoint draws its position from the named region; the
+    # altitude is the route's, as stated
     for seed in range(6):
-        wp = scenario.sample(np.random.default_rng(seed)).queryables["wp"]
+        episode = scenario.sample(np.random.default_rng(seed))
+        wp = episode.queryables["wp"]
         assert 51.8 <= wp.lat <= 52.2 and 4.4 <= wp.lon <= 5.0
-        assert 2000 <= wp.alt_ft <= 9000
-        alts.add(round(wp.alt_ft))
-    assert len(alts) > 1
+        (step,) = episode.spawn.regions[0].route
+        assert step["alt_ft"] == 5000
     # an unknown ref is a build error
     bad = _example_design_spec()
     bad.airspace = {"ref": "nope"}
@@ -480,7 +472,7 @@ def test_sampled_region_params():
                                "radius_nm": {"type": "range", "low": 10.0, "high": 30.0}},
                  "altitude": {"type": "constant", "min_ft": 2000, "max_ft": 9000}},
     }
-    spec.queryables["wp"] = {"type": "waypoint", "sample": {"ref": "zone"}, "alt_ft": 5000}
+    spec.queryables["wp"] = {"type": "waypoint", "sample": {"ref": "zone"}}
     spec.spawn["regions"][0]["bounds"] = {"ref": "zone"}
     assert S.DesignSpec.from_json(spec.to_json()).regions == spec.regions
 
@@ -570,7 +562,7 @@ def test_group_transforms_route_samples_and_preview_regions():
                      "altitude": {"type": "constant", "min_ft": 2000, "max_ft": 9000}},
     }
     spec.queryables["goal"] = {"type": "waypoint", "sample": {"ref": "corridor"},
-                               "sample_per": "aircraft", "alt_ft": 5000}
+                               "sample_per": "aircraft"}
     spec.spawn["regions"][0]["route"] = ["goal"]
     spec.transform = {"groups": [{"id": "g1",
                                   "angle_deg": {"type": "range", "low": 0.0, "high": 360.0},
@@ -669,8 +661,8 @@ def test_per_aircraft_sampled_waypoint():
                                    "lon_min_deg": 5.5, "lon_max_deg": 5.9},
                      "altitude": {"type": "constant", "min_ft": 2000, "max_ft": 4000}},
     }
-    spec.queryables = {"goal": {"type": "waypoint", "sample": {"ref": "goalzone"}, "sample_per": "aircraft", "alt_ft": 3000}}
-    spec.spawn["route"] = ["goal"]
+    spec.queryables = {"goal": {"type": "waypoint", "sample": {"ref": "goalzone"}, "sample_per": "aircraft"}}
+    spec.spawn["route"] = [{"waypoint": "goal", "alt_ft": 3000}]
     # round-trip preserves the per-aircraft sample
     rt = S.DesignSpec.from_json(spec.to_json()).queryables["goal"]
     assert rt["sample_per"] == "aircraft" and rt["sample"] == {"ref": "goalzone"}
@@ -682,7 +674,7 @@ def test_per_aircraft_sampled_waypoint():
     route_step = scenario.support().spawn.route[0]
     assert route_step["waypoint"] == "goal"
     assert 52.5 <= route_step["sample"].bounding_box[0][0] <= 52.8
-    assert goal.alt_ft == 3000
+    assert route_step["alt_ft"] == 3000
     # codegen emits sampling on the route step, not on Waypoint(...).
     files = codegen.generate_task(spec, "PerAc Demo")
     scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
@@ -691,58 +683,48 @@ def test_per_aircraft_sampled_waypoint():
     print("  per-aircraft sampled waypoint: route-step sampling + codegen OK")
 
 
-def test_envelope_value_waypoint():
-    # A waypoint with alt_ft / speed_kts == {"type": "envelope"} defers those
-    # route constraints to a per-aircraft draw within the flight envelope.
+def test_envelope_values_on_a_route_step():
+    # A route step's alt_ft / speed_kts == {"type": "envelope"} defers them to a
+    # per-aircraft draw within the flight envelope; its windows ride with it.
     spec = _example_design_spec()
-    spec.queryables = {
-        "goal": {
-            "type": "waypoint",
-            "lat": 56.0,
-            "lon": 2.0,
-            "alt_ft": {"type": "envelope"},
-            "speed_kts": {"type": "envelope"},
-            "alt_tolerance_ft": 500,
-            "speed_tolerance_kts": 10,
-        }
-    }
-    spec.spawn["route"] = ["goal"]
-    # round-trip preserves the envelope markers
-    rt = S.DesignSpec.from_json(spec.to_json()).queryables["goal"]
-    assert rt["alt_ft"] == {"type": "envelope"}
-    assert rt["speed_kts"] == {"type": "envelope"}
-    # build resolves the markers onto the route step, leaving the queryable static.
+    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0}}
+    windows = {"alt_below_ft": 500, "alt_above_ft": 500, "speed_below_kts": 10, "speed_above_kts": 10}
+    spec.spawn["route"] = [
+        {"waypoint": "goal", "alt_ft": {"type": "envelope"}, "speed_kts": {"type": "envelope"}, **windows}
+    ]
+    # round-trip preserves the envelope markers on the step
+    (rt,) = S.DesignSpec.from_json(spec.to_json()).spawn["route"]
+    assert rt["alt_ft"] == {"type": "envelope"} and rt["speed_kts"] == {"type": "envelope"}
+    # build lowers the markers to the runtime step's envelope keys
     scenario = build_scenario(spec)
-    goal = scenario.support().queryables["goal"]
-    assert isinstance(goal, Waypoint)
-    assert goal.alt_ft is None and goal.speed_kts is None
-    route_step = scenario.support().spawn.route[0]
+    assert isinstance(scenario.support().queryables["goal"], Waypoint)
+    (route_step,) = scenario.support().spawn.route
     assert route_step["sample_alt_from_envelope"] is True
     assert route_step["sample_speed_from_envelope"] is True
-    # codegen reconstructs envelope-mode route metadata.
+    assert "alt_ft" not in route_step and {k: route_step[k] for k in windows} == windows
+    # codegen writes the same runtime step.
     files = codegen.generate_task(spec, "Envelope Demo")
     scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
-    assert "sample_alt_from_envelope=True" not in scenario_py
     assert "'sample_alt_from_envelope': True" in scenario_py
     assert "'sample_speed_from_envelope': True" in scenario_py
-    print("  envelope-value waypoint: route metadata + codegen OK")
+    print("  envelope values on a route step: lowered + codegen OK")
 
 
 def test_a_fix_flown_over_and_a_spawn_headed_at_its_route():
     spec = _example_design_spec()
-    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0, "flyover": True}}
-    spec.spawn["route"] = ["goal"]
+    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0}}
+    spec.spawn["route"] = [{"waypoint": "goal", "flyover": True}]
     for region in spec.spawn["regions"]:
         region["params"]["hdg_deg"] = {"type": "toward_route"}
     rt = S.DesignSpec.from_json(spec.to_json())
-    assert rt.queryables["goal"]["flyover"] is True
+    assert rt.spawn["route"][0]["flyover"] is True
     assert rt.spawn["regions"][0]["params"]["hdg_deg"] == {"type": "toward_route"}
     support = build_scenario(spec).support()
-    assert support.queryables["goal"].flyover is True
+    assert support.spawn.route[0]["flyover"] is True
     assert isinstance(support.spawn.regions[0].params["hdg_deg"], TowardRoute)
     files = codegen.generate_task(spec, "Over The Fix")
     scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
-    assert "flyover=True" in scenario_py
+    assert "'flyover': True" in scenario_py
     assert "'hdg_deg': TowardRoute()" in scenario_py
     assert "from bluesky_sandbox.sim.spawn import TowardRoute" in scenario_py
 
@@ -759,6 +741,49 @@ def test_a_named_route_with_its_color():
     scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
     assert "'home': Route(['goal'], color='white')" in scenario_py
     assert "from bluesky_sandbox.sim.spawn import Route" in scenario_py
+
+
+def test_route_steps_cross_one_fix_each_their_own_way():
+    spec = _example_design_spec()
+    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0}}
+    at_or_above = {"waypoint": "goal", "alt_ft": 5000, "alt_below_ft": 0, "speed_kts": 220, "speed_above_kts": 0}
+    at_or_below = {"waypoint": "goal", "alt_ft": 4000, "alt_above_ft": 0, "speed_kts": {"type": "range", "low": 200, "high": 220}}
+    spec.spawn["routes"] = {"HIGH": [at_or_above], "LOW": [at_or_below]}
+    rt = S.DesignSpec.from_json(spec.to_json())
+    assert rt.spawn["routes"] == spec.spawn["routes"]
+    routes = build_scenario(spec).support().spawn.routes
+    assert routes["HIGH"] == [at_or_above]
+    # A range is a range for the scenario to draw each episode.
+    assert routes["LOW"][0]["speed_kts"] == (200, 220)
+    files = codegen.generate_task(spec, "Windows")
+    scenario_py = files[f"{next(iter(files)).split('/', 1)[0]}/scenario.py"]
+    assert "'alt_below_ft': 0" in scenario_py and "'speed_above_kts': 0" in scenario_py
+    assert "'speed_kts': (200, 220)" in scenario_py
+
+
+def test_a_waypoint_stating_a_crossing_is_refused():
+    spec = _example_design_spec()
+    spec.queryables = {"goal": {"type": "waypoint", "lat": 56.0, "lon": 2.0, "alt_ft": 5000}}
+    with pytest.raises(S.SpecError, match="route steps"):
+        build_scenario(spec)
+
+
+def test_a_choice_branch_written_as_one_step_loads_as_a_list():
+    # The routes read a branch given as one step as a list of it; the designer
+    # edits branches as lists, so a design loads with them so.
+    spec = _example_design_spec()
+    spec.queryables = {n: {"type": "waypoint", "lat": 56.0 + i, "lon": 2.0} for i, n in enumerate(("A", "B", "C"))}
+    one_step = {"choice": [{"route": "LEFT"}, "C"], "weights": [1, 1]}
+    spec.spawn["routes"] = {
+        "LEFT": ["B"],
+        "ARRIVAL": {"type": "route", "steps": ["A", one_step], "color": "white"},
+    }
+    spec.spawn["route"] = ["A", one_step]
+    loaded = S.DesignSpec.from_json(spec.to_json())
+    as_lists = {"choice": [[{"route": "LEFT"}], ["C"]], "weights": [1, 1]}
+    assert loaded.spawn["route"] == ["A", as_lists]
+    assert loaded.spawn["routes"]["ARRIVAL"] == {"type": "route", "steps": ["A", as_lists], "color": "white"}
+    build_scenario(loaded).support()  # still flies
 
 
 def test_active_route_waypoint_fields_cataloged():
@@ -856,9 +881,10 @@ def test_route_step_crossing_restrictions():
     assert resolve_route(routes["STAR"], routes) == ["RIVER", "EEL"]
 
     # Validation rejects bad override keys / non-finite values.
+    # A speed alone is a restriction too: "250 KT or less" with no level.
+    assert expand_route_paths([{"waypoint": "EEL", "speed_kts": 250}], {}) == [["EEL"]]
     for bad in (
         [{"waypoint": "EEL", "speed_kts": "fast"}],
-        [{"waypoint": "EEL", "speed_kts": 250}],
         [{"waypoint": "EEL", "bogus": 1}],
         [{"speed_kts": 250}],
     ):
@@ -890,12 +916,11 @@ def test_route_step_crossing_restrictions():
     print("  route steps: crossing restrictions preserved, validate, round-trip, codegen OK")
 
 
-def test_route_speed_requires_resolved_altitude():
+def test_a_route_speed_needs_no_altitude():
+    # "250 KT or less" at a fix with no level: BlueSky flies the speed alone.
     spec = _example_design_spec()
-    spec.queryables = {
-        "FAST": {"type": "waypoint", "lat": 52.0, "lon": 4.5, "speed_kts": 250}
-    }
-    spec.spawn["route"] = ["FAST"]
+    spec.queryables = {"FAST": {"type": "waypoint", "lat": 52.0, "lon": 4.5}}
+    spec.spawn["route"] = [{"waypoint": "FAST", "speed_kts": 250}]
     env_cls = type("RouteSpeedEnv", (BlueskyEnv,), {})
     env = env_cls(
         scenario=build_scenario(spec),
@@ -904,13 +929,12 @@ def test_route_speed_requires_resolved_altitude():
     )
     try:
         env.reset(seed=0)
-    except ValueError as e:
-        assert "speed constraints require alt_ft" in str(e)
-    else:
-        raise AssertionError("expected speed-only route target to fail")
+        while not bs.traf.ntraf:
+            env.step({})
+        route = bs.traf.ap.route[0]
+        assert route.wpalt[0] < 0 and round(float(route.wpspd[0]) / kts) == 250
     finally:
         env.close()
-    print("  route speed constraints require resolved altitude OK")
 
 
 def test_env_hooks_catalog_and_codegen():
@@ -1355,7 +1379,7 @@ def test_custom_code_fields_resolve_in_build():
 
 def test_queryable_obs_fields_resolve_in_build_and_codegen():
     spec = _example_design_spec()
-    spec.queryables["merge"] = S.dump(Waypoint(lat=52.0, lon=4.7, alt_ft=3000.0))
+    spec.queryables["merge"] = S.dump(Waypoint(lat=52.0, lon=4.7))
     spec.env.obs_fields = [
         S.FieldRef("WaypointRouteIndex", kwargs={"query_name": "merge"}),
     ]
@@ -1375,7 +1399,7 @@ def test_temporal_queryable_fields_require_tracking_flag():
         "type": "query_region",
         "bounds": S.dump(RegionBounds(BoxFootprint(51.9, 52.1, 4.4, 4.8))),
     }
-    spec.queryables["merge"] = S.dump(Waypoint(lat=52.0, lon=4.7, alt_ft=3000.0))
+    spec.queryables["merge"] = S.dump(Waypoint(lat=52.0, lon=4.7))
     spec.env.obs_fields = [
         S.FieldRef("QueryRegionInsideDuringStep", kwargs={"query_name": "zone"}),
         S.FieldRef("WaypointSatisfiedDuringStep", kwargs={"query_name": "merge"}),
@@ -1476,7 +1500,7 @@ def test_scenario_hooks():
     # The fixture's only queryable is a query_region; the hook needs a waypoint
     # with a position to move.
     spec.queryables["fix"] = {
-        "type": "waypoint", "lat": 52.0, "lon": 4.5, "alt_ft": 10000,
+        "type": "waypoint", "lat": 52.0, "lon": 4.5,
     }
     spec.scenario_setup = (
         "from dataclasses import replace\n"

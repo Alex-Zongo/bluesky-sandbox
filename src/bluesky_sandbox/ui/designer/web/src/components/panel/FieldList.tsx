@@ -1,10 +1,11 @@
 // Observation/action field lists: add/remove/parametrize field refs, edit
 // constructor kwargs + normalization in a modal, and scaffold/edit custom field
 // classes in custom_fields.py.
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { SpecDict } from "../../api";
 import { scaffoldClass, type Scaffolds } from "../../specHelpers";
+import { waypointSteps } from "../../route/namedRoute";
 import { registerPythonIntel } from "../../code/pythonEditor";
 import { FieldPicker } from "./FieldPicker";
 import { FieldProbe } from "./FieldProbe";
@@ -89,7 +90,7 @@ export function FieldList({
   fields,
   options,
   normalizers,
-  queryables,
+  queryables: designQueryables,
   validationError,
   code,
   onCodeChange,
@@ -130,6 +131,17 @@ export function FieldList({
   // An entry to open on its Probe tab (a new object each time it is asked).
   open?: { entry: number } | null;
 }) {
+  // Each waypoint with the route steps through it: a field's requirement - an
+  // altitude, a speed, a window - is met by how a route crosses it.
+  const queryables = useMemo(() => {
+    const steps = waypointSteps(spec?.spawn);
+    return Object.fromEntries(
+      Object.entries(designQueryables).map(([name, q]) => [
+        name,
+        q?.type === "waypoint" ? { ...q, route_steps: steps[name] ?? [] } : q,
+      ]),
+    );
+  }, [designQueryables, spec?.spawn]);
   const [editing, setEditing] = useState<number | null>(null);
   const [startTab, setStartTab] = useState<"code" | "probe">("code");
   useEffect(() => {
@@ -967,16 +979,17 @@ function queryableKind(q: SpecDict): "region" | "waypoint" {
   return q?.type === "waypoint" ? "waypoint" : "region";
 }
 
+// A waypoint meets a requirement where some route step through it does.
 function queryableSatisfiesRequirements(q: SpecDict, requirements: string[]): boolean {
+  const steps: SpecDict[] = q.route_steps ?? [];
+  const some = (keys: string[]) => steps.some((step) => keys.some((k) => step[k] != null));
   for (const requirement of requirements) {
-    if (requirement === "altitude" && !Number.isFinite(q.alt_ft)) return false;
-    if (requirement === "speed" && !Number.isFinite(q.speed_kts)) return false;
+    if (requirement === "altitude" && !some(["alt_ft"])) return false;
+    if (requirement === "speed" && !some(["speed_kts"])) return false;
     if (
       requirement === "tolerance" &&
       q.reach_radius_nm == null &&
-      q.alt_tolerance_ft == null &&
-      q.speed_tolerance_kts == null &&
-      q.speed_tolerance_mach == null
+      !some(["alt_below_ft", "alt_above_ft", "speed_below_kts", "speed_above_kts"])
     ) {
       return false;
     }

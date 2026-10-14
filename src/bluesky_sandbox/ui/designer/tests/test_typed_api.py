@@ -23,7 +23,7 @@ from .test_designer import _example_design_spec
 @pytest.fixture(scope="module")
 def package(tmp_path_factory):
     design = _example_design_spec()
-    design.queryables["wp"] = S.dump(Waypoint(lat=52.0, lon=4.5, alt_ft=3000))
+    design.queryables["wp"] = S.dump(Waypoint(lat=52.0, lon=4.5))
     design.env.hook_setup = "import numpy as np"
     root = tmp_path_factory.mktemp("typed")
     codegen.write_task(design, "typed_pkg", root)

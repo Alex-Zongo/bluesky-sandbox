@@ -46,6 +46,7 @@ from typing import Any
 
 import scipy.stats as _scipy_stats
 
+from bluesky_sandbox.sim.fixes import CROSSING_KEYS
 from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.bounds import (
     AnnularSectorFootprint,
@@ -284,25 +285,28 @@ def load_value(d: Any) -> Any:
     return d
 
 
-# Waypoint constraint/target fields that may be per-episode sampled values
-# (fixed number, range, or scipy distribution) rather than plain scalars.
-SAMPLEABLE_WAYPOINT_FIELDS = (
-    "alt_ft",
-    "speed_kts",
-    "reach_radius_nm",
-    "alt_tolerance_ft",
-    "speed_tolerance_kts",
-)
+# Waypoint fields that may be per-episode sampled values (fixed number, range,
+# or scipy distribution) rather than plain scalars.
+SAMPLEABLE_WAYPOINT_FIELDS = ("reach_radius_nm",)
 
+#: What a design's route step through a waypoint may state beyond its crossing
+#: (:data:`~bluesky_sandbox.sim.fixes.CROSSING_KEYS`): an arrival time over it,
+#: and how its altitude is drawn from the aircraft's envelope.
+STEP_DESIGN_KEYS = (
+    "arrival_slack_s",
+    "reachable_from_spawn",
+    "reachable_vs_fraction",
+    "envelope_alt_floor_ft",
+)
 
 def is_value_distribution(v: Any) -> bool:
     """True when ``v`` is a tagged sampled-value dict (range / scipy / categorical)."""
     return isinstance(v, dict) and v.get("type") in ("range", "scipy", "categorical")
 
 
-# Marker for a waypoint alt/speed drawn per-aircraft from the flight envelope.
-# Unlike range/scipy, it cannot resolve at build time (no aircraft yet), so the
-# builder copies it onto route-step sampling metadata rather than a queryable.
+# Marker for a route step's alt/speed drawn per-aircraft from the flight
+# envelope. Unlike range/scipy, it cannot resolve at build time (no aircraft
+# yet): the builder lowers it to the step's envelope-sampling keys.
 ENVELOPE_VALUE = {"type": "envelope"}
 
 
@@ -313,13 +317,13 @@ def is_envelope_value(v: Any) -> bool:
     )
 
 
-# Marker for a waypoint altitude taken from where its leg starts - the
+# Marker for a route step's altitude taken from where its leg starts - the
 # aircraft's own altitude for the first leg: level flight to the fix.
 START_VALUE = {"type": "start"}
 
 
 def is_start_value(v: Any) -> bool:
-    """True when ``v`` marks a waypoint altitude taken from the leg's start."""
+    """True when ``v`` marks a route step's altitude taken from the leg's start."""
     return isinstance(v, dict) and v.get("type") == "start"
 
 
@@ -327,6 +331,72 @@ def envelope_alt_step(v: Any) -> float | None:
     """The level grid of an envelope marker (``alt_step_ft``), None without."""
     step = v.alt_step_ft if isinstance(v, EnvelopeSample) else v.get("alt_step_ft")
     return None if step is None else float(step)
+
+
+def lower_route_step(step: Any, sample: Any = None) -> Any:
+    """A design's route step as the runtime takes it: its altitude or speed
+    marked as drawn from the aircraft's envelope, or taken from where the leg
+    starts, as the sampling keys those stand for; the envelope's floor and the
+    reachable-altitude bound kept only alongside an envelope draw. ``sample`` -
+    its waypoint's region, where the waypoint is drawn per aircraft - is where
+    the step's fix is drawn, unless the step says. Values stay as the design
+    writes them (a range a ``{"type": "range"}`` dict)."""
+    if isinstance(step, str):
+        return step if sample is None else {"waypoint": step, "sample": sample}
+    if not (isinstance(step, dict) and "waypoint" in step):
+        return step
+    out = dict(step)
+    if sample is not None:
+        out.setdefault("sample", sample)
+    alt = out.get("alt_ft")
+    if is_envelope_value(alt) or is_start_value(alt):
+        del out["alt_ft"]
+        out["sample_alt_from_envelope" if is_envelope_value(alt) else "alt_from_start"] = True
+        if (grid := envelope_alt_step(alt)) is not None:
+            out["alt_step_ft"] = grid
+    if is_envelope_value(out.get("speed_kts")):
+        del out["speed_kts"]
+        out["sample_speed_from_envelope"] = True
+    if not (out.get("sample_alt_from_envelope") or out.get("sample_speed_from_envelope")):
+        out.pop("envelope_alt_floor_ft", None)
+    if not (out.get("sample_alt_from_envelope") and out.get("reachable_from_spawn")):
+        out.pop("reachable_from_spawn", None)
+        out.pop("reachable_vs_fraction", None)
+    return out
+
+
+def lower_spawn_routes(spawn: dict[str, Any], samples: dict[str, Any] | None = None) -> dict[str, Any]:
+    """``spawn`` (a design's spawn config dict) with every route step through
+    a waypoint lowered (:func:`lower_route_step`) - its own route, its named
+    routes and each region's, choice branches included. ``samples`` - each
+    waypoint drawn per aircraft, by name, with its region."""
+    samples = samples or {}
+
+    def step_lowered(step):
+        if isinstance(step, dict) and "choice" in step:
+            return {
+                **step,
+                "choice": [
+                    [step_lowered(s) for s in branch] if isinstance(branch, list) else step_lowered(branch)
+                    for branch in step["choice"]
+                ],
+            }
+        name = step if isinstance(step, str) else step.get("waypoint") if isinstance(step, dict) else None
+        return lower_route_step(step, samples.get(name))
+
+    def route_lowered(route):
+        return [step_lowered(step) for step in route] if isinstance(route, list) else route
+
+    out = dict(spawn)
+    out["route"] = route_lowered(out.get("route"))
+    out["routes"] = {
+        name: with_route_steps(route, route_lowered) for name, route in (out.get("routes") or {}).items()
+    }
+    out["regions"] = [
+        {**region, "route": route_lowered(region.get("route"))} if isinstance(region, dict) else region
+        for region in out.get("regions", [])
+    ]
+    return out
 
 
 def representative_value(v: Any) -> Any:
@@ -831,15 +901,7 @@ def _queryable_dump(q: Queryable) -> dict[str, Any]:
         else:
             out["lat"] = float(q.lat)
             out["lon"] = float(q.lon)
-        for key in (
-            "alt_ft",
-            "speed_kts",
-            "alt_tolerance_ft",
-            "speed_tolerance_kts",
-            "speed_tolerance_mach",
-            "tsas_region",
-            "render_tsas",
-        ):
+        for key in ("tsas_region", "render_tsas"):
             val = getattr(q, key)
             if val is not None:
                 out[key] = val
@@ -851,8 +913,6 @@ def _queryable_dump(q: Queryable) -> dict[str, Any]:
         out["render_shape"] = q.render_shape
         out["render_label"] = q.render_label
         out["track_temporal_state"] = q.track_temporal_state
-        if q.flyover:
-            out["flyover"] = True
         return out
     raise SpecError(
         f"cannot serialize queryable of type {type(q).__name__}; custom "
@@ -887,12 +947,12 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
                 (lat_min, lat_max), (lon_min, lon_max) = sampled_bounds.bounding_box
                 lat = (lat_min + lat_max) / 2.0
                 lon = (lon_min + lon_max) / 2.0
-        # Envelope markers are route-generation metadata. The queryable keeps no
-        # per-aircraft sampling state, so its static target leaves that axis unset.
-        alt_ft = d.get("alt_ft")
-        speed_kts = d.get("speed_kts")
-        sample_alt_env = is_envelope_value(alt_ft)
-        sample_spd_env = is_envelope_value(speed_kts)
+        crossing = sorted(set(d) & {*CROSSING_KEYS, *STEP_DESIGN_KEYS})
+        if crossing:
+            raise SpecError(
+                f"waypoint {d.get('waypoint') or (lat, lon)!r} states {crossing}: how a "
+                "fix is crossed is each route's - state it on the route steps through it."
+            )
         # At a point: where the point is (the builder inlines its ref).
         shape = shape_of(d)
         at = load(shape) if isinstance(shape, dict) and "ref" not in shape else None
@@ -903,19 +963,13 @@ def _queryable_load(d: dict[str, Any]) -> Queryable:
             lat=lat,
             lon=lon,
             waypoint=None if at is not None else d.get("waypoint"),
-            alt_ft=None if sample_alt_env else alt_ft,
-            speed_kts=None if sample_spd_env else speed_kts,
             reach_radius_nm=d.get("reach_radius_nm", 1.0),
-            alt_tolerance_ft=d.get("alt_tolerance_ft"),
-            speed_tolerance_kts=d.get("speed_tolerance_kts"),
-            speed_tolerance_mach=d.get("speed_tolerance_mach"),
             color=d.get("color", "cyan"),
             tsas_region=d.get("tsas_region"),
             render_shape=d.get("render_shape", True),
             render_tsas=d.get("render_tsas"),
             render_label=d.get("render_label", True),
             track_temporal_state=d.get("track_temporal_state", False),
-            flyover=d.get("flyover", False),
         )
     raise SpecError(f"unknown queryable type {t!r}")
 
@@ -1284,8 +1338,6 @@ class EnvSpec:
     wind_kts: float = 0.0
     turbulence_kts: float = 0.0
     gust_tau_s: float = 30.0
-    # Own navigation meets each fix's arrival time (BlueSky's RTA).
-    fly_arrival_times: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1335,7 +1387,6 @@ class EnvSpec:
             "wind_kts": self.wind_kts,
             "turbulence_kts": self.turbulence_kts,
             "gust_tau_s": self.gust_tau_s,
-            "fly_arrival_times": self.fly_arrival_times,
         }
 
     @classmethod
@@ -1388,7 +1439,6 @@ class EnvSpec:
             wind_kts=d.get("wind_kts", 0.0),
             turbulence_kts=d.get("turbulence_kts", 0.0),
             gust_tau_s=d.get("gust_tau_s", 30.0),
-            fly_arrival_times=bool(d.get("fly_arrival_times", False)),
         )
 
 
@@ -1414,6 +1464,37 @@ def _spawn_with_shape_keys(spawn: Any) -> Any:
     if isinstance(spawn, dict) and isinstance(spawn.get("regions"), list):
         return {**spawn, "regions": [_with_shape_key(r) for r in spawn["regions"]]}
     return spawn
+
+
+def _with_list_branches(steps: Any) -> Any:
+    """A route's steps with each choice's branches as lists of steps, however
+    deep: a branch may be written as one step, which the routes read as a list
+    of it, and the designer edits branches as lists."""
+    if not isinstance(steps, list):
+        return steps
+    out = []
+    for step in steps:
+        if isinstance(step, dict) and isinstance(step.get("choice"), list):
+            branches = [_with_list_branches(b if isinstance(b, list) else [b]) for b in step["choice"]]
+            step = {**step, "choice": branches}
+        out.append(step)
+    return out
+
+
+def _spawn_with_list_branches(spawn: Any) -> Any:
+    """A spawn's routes - global, named (a ``{"type": "route"}`` one's steps),
+    each region's - with their choices' branches as lists (see
+    _with_list_branches)."""
+    if not isinstance(spawn, dict):
+        return spawn
+    out = {**spawn, "route": _with_list_branches(spawn.get("route"))}
+    if isinstance(spawn.get("routes"), dict):
+        out["routes"] = {k: with_route_steps(r, _with_list_branches) for k, r in spawn["routes"].items()}
+    if isinstance(spawn.get("regions"), list):
+        out["regions"] = [
+            {**r, "route": _with_list_branches(r.get("route"))} if isinstance(r, dict) else r for r in spawn["regions"]
+        ]
+    return out
 
 
 @renamed(regions="shapes")
@@ -1518,7 +1599,8 @@ class DesignSpec:
             code.pop("task.py", None)
         return cls(
             env=env,
-            spawn=_spawn_with_shape_keys(d["spawn"]),
+            # Choice branches written as one step, as lists (the designer's form).
+            spawn=_spawn_with_list_branches(_spawn_with_shape_keys(d["spawn"])),
             airspace=d.get("airspace"),
             # Older designs: an element's "bounds", the design's "regions".
             queryables={k: _with_shape_key(v) for k, v in d.get("queryables", {}).items()},

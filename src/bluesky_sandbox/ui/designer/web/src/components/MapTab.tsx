@@ -17,16 +17,16 @@ import {
   TAG_OFFSET_PX,
   TAG_SIZE_PX,
   aircraftTag,
-  spawnTargetKey,
-  targetTag,
-  uniqueTargets,
+  spawnFixKey,
+  fixTag,
+  uniqueFixes,
   deckLayers,
   getTooltip,
 } from "../map/deckLayers";
 import { WebMercatorViewport } from "@deck.gl/core";
 import { setColorPalette } from "../map/geometry";
 import { BASEMAPS, DEFAULT_BASEMAP, basemapById, type BasemapId } from "../map/basemaps";
-import { gcOrphanShapes, placementAltitudeRange } from "../specHelpers";
+import { gcOrphanShapes } from "../specHelpers";
 import { addWaypointAt } from "../waypointPoints";
 import { shapeGraph, isUnused } from "../shapeGraph";
 import { shapesInView } from "../map/shapesInView";
@@ -442,10 +442,10 @@ export default function MapTab({
       ...[...flown]
         .sort((a, b) => Number(b.controlled) - Number(a.controlled))
         .map((a) => ({ id: a.callsign, at: [a.lon_deg, a.lat_deg, zMeters(a.alt_ft)] as [number, number, number], text: aircraftTag(a) })),
-      ...uniqueTargets(flown).map((t) => ({
-        id: spawnTargetKey(t),
+      ...uniqueFixes(flown).map((t) => ({
+        id: spawnFixKey(t),
         at: [t.lon, t.lat, zMeters(t.alt_ft ?? 0)] as [number, number, number],
-        text: targetTag(t),
+        text: fixTag(t),
       })),
     ];
     const kept: [number, number, number, number][] = [];
@@ -777,9 +777,7 @@ export default function MapTab({
   const addWaypoint = (ident: string, lat: number, lon: number) => {
     if (!spec) return;
     const next = structuredClone(spec);
-    const altRange = placementAltitudeRange(next.airspace);
-    const altFt = altRange ? (altRange[0] + altRange[1]) / 2 : undefined;
-    addWaypointAt(next, ident.toLowerCase(), lat, lon, ident, altFt);
+    addWaypointAt(next, ident.toLowerCase(), lat, lon, ident);
     onSpecChange(next);
   };
 

@@ -45,11 +45,15 @@ import {
   dropIndex,
   insertOnEdge,
   moveWithin,
+  isWpStep,
   removeOption,
+  replaceAt,
   routeToGraph,
   setOptionWeight,
   skipBetween,
+  stepAt,
 } from "./routeGraph";
+import { CrossingEditor, crossingSummary, stepOrName } from "../components/panel/CrossingEditor";
 
 // What a dragged waypoint chip carries.
 const STEP_MIME = "application/x-route-step";
@@ -58,6 +62,8 @@ const emptySpawn = (): SpecDict => ({ type: "spawn_config", regions: [], route: 
 
 type NodeData = {
   label: string;
+  // How the route crosses the fix, in a line.
+  crossing?: string;
   kind: string;
   selected: boolean;
   onDelete?: () => void;
@@ -67,7 +73,10 @@ function StepNode({ data }: NodeProps<Node<NodeData>>) {
   return (
     <div className={`rf-node rf-${data.kind} ${data.selected ? "sel" : ""}`}>
       <Handle type="target" position={Position.Left} className="rf-handle" isConnectableStart={false} />
-      <span className="rf-node-label">{data.label}</span>
+      <span className="rf-node-text">
+        <span className="rf-node-label">{data.label}</span>
+        {data.crossing && <span className="rf-node-xing">{data.crossing}</span>}
+      </span>
       {data.onDelete && (
         <button className="rf-node-x" title="remove" onClick={(e) => { e.stopPropagation(); data.onDelete!(); }}>✕</button>
       )}
@@ -223,6 +232,11 @@ export default function RouteTab({
   // Waypoint names appearing in this route (for the map's sampled-waypoint links).
   const routeWaypoints = graph.nodes.filter((n) => n.kind === "waypoint").map((n) => n.label);
 
+  // A waypoint step's crossing, in a line: none for a bare name.
+  const crossingOf = (addr: Addr | null) => {
+    const step = addr ? stepAt(steps, addr) : null;
+    return step && isWpStep(step) ? crossingSummary(step) || undefined : undefined;
+  };
   const movable = (kind: string) => kind === "waypoint" || kind === "subroute" || kind === "branch";
   const rfNodes: Node<NodeData>[] = graph.nodes.map((n) => ({
     id: n.id,
@@ -232,6 +246,7 @@ export default function RouteTab({
     position: { x: drag?.id === n.id ? drag.x : n.x, y: n.y },
     data: {
       label: n.kind === "start" ? spawnName ?? "spawn" : n.label || (n.kind === "merge" ? "●" : ""),
+      crossing: crossingOf(n.addr),
       kind: n.kind,
       selected: n.id === selId,
       onDelete: n.addr && (n.kind === "waypoint" || n.kind === "subroute") ? () => setSteps(deleteAt(steps, n.addr!)) : undefined,
@@ -436,6 +451,7 @@ export default function RouteTab({
                 onRemoveOption={(oi) => selAddr && setSteps(removeOption(steps, selAddr, oi))}
                 onSetWeight={(oi, w) => selAddr && setSteps(setOptionWeight(steps, selAddr, oi, w))}
                 onDelete={() => selAddr && setSteps(deleteAt(steps, selAddr))}
+                onSetStep={(next) => selAddr && setSteps(replaceAt(steps, selAddr, next))}
               />
             </div>
           )}
@@ -480,6 +496,7 @@ function RouteStepInspector({
   onRemoveOption,
   onSetWeight,
   onDelete,
+  onSetStep,
 }: {
   selNode: ReturnType<typeof routeToGraph>["nodes"][number] | null;
   steps: RouteStep[];
@@ -491,6 +508,7 @@ function RouteStepInspector({
   onRemoveOption: (oi: number) => void;
   onSetWeight: (oi: number, w: number) => void;
   onDelete: () => void;
+  onSetStep: (step: RouteStep) => void;
 }) {
   const isBranch = selNode?.kind === "branch";
   const isStep = selNode?.kind === "waypoint" || selNode?.kind === "subroute";
@@ -519,6 +537,18 @@ function RouteStepInspector({
           <button className="danger-btn route-delete-step" onClick={onDelete}>
             Delete step
           </button>
+          {selNode!.kind === "waypoint" && selNode!.addr && (() => {
+            const step = stepAt(steps, selNode!.addr);
+            return (
+              <>
+                <div className="sub-label">crossing</div>
+                <CrossingEditor
+                  step={isWpStep(step) ? step : { waypoint: step as string }}
+                  onChange={(next) => onSetStep(stepOrName(next) as RouteStep)}
+                />
+              </>
+            );
+          })()}
         </>
       )}
 

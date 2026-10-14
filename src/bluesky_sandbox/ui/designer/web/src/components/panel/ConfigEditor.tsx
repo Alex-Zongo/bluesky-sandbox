@@ -315,17 +315,6 @@ export function ConfigEditor({
         </FormCard>
 
         <WindCard env={env} set={set} />
-
-        <FormCard title="Automation" help={<>What an aircraft on own navigation (LNAV + VNAV) does by itself.</>}>
-          <label className="form-check" title="a fix's arrival time (arrival slack on the waypoint) becomes a BlueSky RTA">
-            <input
-              type="checkbox"
-              checked={env.fly_arrival_times ?? false}
-              onChange={(e) => set({ fly_arrival_times: e.target.checked })}
-            />
-            meet arrival times (RTA): own navigation adjusts speed to be over each fix on time
-          </label>
-        </FormCard>
       </FormColumn>
     </>
   );

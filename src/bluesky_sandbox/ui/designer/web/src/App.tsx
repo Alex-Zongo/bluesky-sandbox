@@ -4,7 +4,7 @@ import { useBusy } from "./busy";
 import { Spinner } from "./components/Spinner";
 import { forgetModuleMembers, useCodeIntel } from "./code/pythonEditor";
 import { DEFAULT_SPEC } from "./defaultSpec";
-import { migrateRewardHooks, migrateRotationGroups, migrateShapeKeys, migrateTypesOntoRegions, normalizeToRegions } from "./specHelpers";
+import { migrateListBranches, migrateRewardHooks, migrateRotationGroups, migrateShapeKeys, migrateTypesOntoRegions, normalizeToRegions } from "./specHelpers";
 import { migrateWaypointMembers } from "./groupTree";
 import { migrateWaypointsToPoints } from "./waypointPoints";
 import MapTab from "./components/MapTab";
@@ -26,7 +26,7 @@ type Tab = "map" | "route" | "spaces" | "config" | "code" | "metadata";
 
 const normalizeSpec = (spec: SpecDict): SpecDict => {
   const next = migrateTypesOntoRegions(
-    migrateRotationGroups(migrateRewardHooks(normalizeToRegions(migrateShapeKeys(spec) as SpecDict))),
+    migrateRotationGroups(migrateRewardHooks(normalizeToRegions(migrateListBranches(migrateShapeKeys(spec)) as SpecDict))),
   );
   // Older designs' waypoints: grouped directly (`wp:` members, now anchors),
   // and positioned on themselves - each moved onto a point of its own.
@@ -108,7 +108,7 @@ export default function App() {
   const { spec, parseError } = useMemo<{ spec: SpecDict | null; parseError: string | null }>(() => {
     try {
       // Typed JSON may use the older keys ("regions", an element's "bounds").
-      return { spec: migrateShapeKeys(JSON.parse(specText)), parseError: null };
+      return { spec: migrateListBranches(migrateShapeKeys(JSON.parse(specText))), parseError: null };
     } catch (e) {
       return { spec: null, parseError: (e as Error).message };
     }

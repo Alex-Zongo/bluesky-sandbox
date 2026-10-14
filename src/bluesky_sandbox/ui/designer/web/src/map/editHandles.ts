@@ -20,7 +20,6 @@ import {
   rotateLatLon,
   solveRawPointsForDisplay,
   updateRotatedBoxCorner,
-  zMeters,
 } from "./geometry";
 
 export function targetKey(target: EditTarget | null | undefined): string {
@@ -126,14 +125,13 @@ export function buildEditHandles(spec: SpecDict | null, preview?: PreviewResult 
       const at = waypointLatLon(spec, item);
       const lat = at ? at[0] : resolved?.lat;
       const lon = at ? at[1] : resolved?.lon;
-      const altFt = Number.isFinite(item.alt_ft) ? item.alt_ft : resolved?.alt_ft;
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
         handles.push({
           id: `waypoint:${name}`,
           name,
           lat,
           lon,
-          z: zMeters(altFt) + WAYPOINT_LIFT_M,
+          z: WAYPOINT_LIFT_M,
           target,
           role: "move-shape",
           color: cssToRgb(item.color),

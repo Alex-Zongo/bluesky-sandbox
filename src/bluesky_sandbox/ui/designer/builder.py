@@ -28,6 +28,7 @@ from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any
 
+from bluesky_sandbox.sim.fixes import CROSSING_KEYS
 from bluesky_sandbox.config import EnvConfig, apply_performance_model
 from bluesky_sandbox.env import BATCHABLE_HOOKS
 from bluesky_sandbox.interface.fields import actions as _actions
@@ -471,7 +472,8 @@ def _resolved_geometry(
     resolve = _region_resolver(spec)
     airspace = resolve(spec.airspace) if spec.airspace is not None else None
     queryables: dict[str, dict[str, Any]] = {}
-    route_sampling: dict[str, dict[str, Any]] = {}
+    # Each waypoint drawn per aircraft, by name: the region its fix is drawn in.
+    samples: dict[str, Any] = {}
     for name, q in spec.queryables.items():
         if isinstance(q, dict):
             q = dict(q)
@@ -488,52 +490,14 @@ def _resolved_geometry(
                 if q.get("sample") is not None:
                     q["sample"] = resolve(q["sample"])
                     if q.get("sample_per") == "aircraft":
-                        route_sampling.setdefault(name, {})["sample"] = q["sample"]
-                # Distribution-valued constraint fields become their support scalar
-                # here; the per-episode draw happens in the scenario.
+                        samples[name] = q["sample"]
+                # Distribution-valued fields become their support scalar here;
+                # the per-episode draw happens in the scenario.
                 q, _ = _spec.extract_waypoint_field_dists(q)
-                if _spec.is_envelope_value(q.get("alt_ft")):
-                    route_sampling.setdefault(name, {})["sample_alt_from_envelope"] = True
-                    # Levels: the envelope marker's grid, for the per-aircraft draw.
-                    if (step := _spec.envelope_alt_step(q["alt_ft"])) is not None:
-                        route_sampling[name]["alt_step_ft"] = step
-                    q["alt_ft"] = None
-                elif _spec.is_start_value(q.get("alt_ft")):
-                    # Level flight: the altitude the leg starts at, per aircraft.
-                    route_sampling.setdefault(name, {})["alt_from_start"] = True
-                    if (step := _spec.envelope_alt_step(q["alt_ft"])) is not None:
-                        route_sampling[name]["alt_step_ft"] = step
-                    q["alt_ft"] = None
-                if _spec.is_envelope_value(q.get("speed_kts")):
-                    route_sampling.setdefault(name, {})["sample_speed_from_envelope"] = True
-                    q["speed_kts"] = None
-                if "envelope_alt_floor_ft" in q and name in route_sampling:
-                    route_sampling[name]["envelope_alt_floor_ft"] = q[
-                        "envelope_alt_floor_ft"
-                    ]
-                # Bound the per-aircraft envelope altitude draw to what the
-                # aircraft can climb/descend to before reaching the fix. Only
-                # meaningful alongside an envelope-sampled altitude.
-                # A target arrival time over this fix, for every aircraft whose
-                # route crosses it: nominal plus a slack drawn per aircraft.
-                slack = q.pop("arrival_slack_s", None)
-                if slack is not None:
-                    route_sampling.setdefault(name, {})["arrival_slack_s"] = (
-                        _spec.load_value(slack)
-                    )
-                reachable = q.pop("reachable_from_spawn", False)
-                vs_fraction = q.pop("reachable_vs_fraction", None)
-                if reachable and route_sampling.get(name, {}).get(
-                    "sample_alt_from_envelope"
-                ):
-                    route_sampling[name]["reachable_from_spawn"] = True
-                    if vs_fraction is not None:
-                        route_sampling[name]["reachable_vs_fraction"] = vs_fraction
         queryables[name] = q
     spawn = spec.spawn
     if isinstance(spawn, dict):
-        spawn = dict(spawn)
-        spawn = _move_waypoint_sampling_to_routes(spawn, route_sampling)
+        spawn = _spec.lower_spawn_routes(dict(spawn), samples)
         spawn["regions"] = [
             {**{k: v for k, v in r.items() if k != "bounds"}, "shape": resolve(_spec.shape_of(r))}
             if isinstance(r, dict) and _spec.shape_of(r) is not None
@@ -541,55 +505,6 @@ def _resolved_geometry(
             for r in spawn.get("regions", [])
         ]
     return airspace, queryables, spawn
-
-
-def _move_waypoint_sampling_to_routes(
-    spawn: dict[str, Any],
-    route_sampling: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Copy per-aircraft waypoint sampling metadata onto route steps."""
-    if not route_sampling:
-        return spawn
-
-    def step_with_sampling(step):
-        if isinstance(step, str):
-            metadata = route_sampling.get(step)
-            return {"waypoint": step, **metadata} if metadata else step
-        if not isinstance(step, dict):
-            return step
-        if "waypoint" in step:
-            metadata = route_sampling.get(step["waypoint"])
-            return {**step, **metadata} if metadata else step
-        if "choice" in step:
-            return {
-                **step,
-                "choice": [
-                    [step_with_sampling(s) for s in branch]
-                    if isinstance(branch, list)
-                    else step_with_sampling(branch)
-                    for branch in step["choice"]
-                ],
-            }
-        return step
-
-    def route_with_sampling(route):
-        if not isinstance(route, list):
-            return route
-        return [step_with_sampling(step) for step in route]
-
-    out = dict(spawn)
-    out["route"] = route_with_sampling(out.get("route"))
-    out["routes"] = {
-        name: _spec.with_route_steps(route, route_with_sampling)
-        for name, route in out.get("routes", {}).items()
-    }
-    out["regions"] = [
-        {**region, "route": route_with_sampling(region.get("route"))}
-        if isinstance(region, dict)
-        else region
-        for region in out.get("regions", [])
-    ]
-    return out
 
 
 def _materialize(
@@ -612,13 +527,18 @@ def _materialize(
 
 
 def _load_route_step_sample_bounds(spawn: SpawnConfig) -> None:
-    """Convert designer route-step sample dicts into runtime Bounds objects."""
+    """Load designer route steps' values as the runtime takes them: a sampled
+    fix's region as Bounds, a crossing number or arrival slack given as a range
+    or distribution as one (drawn per episode, the slack per aircraft)."""
 
     def load_step(step):
         if not isinstance(step, dict):
             return step
         if "sample" in step and isinstance(step["sample"], dict):
             step = {**step, "sample": _load_sample_bounds(step["sample"])}
+        for key in (*CROSSING_KEYS, "arrival_slack_s"):
+            if _spec.is_value_distribution(step.get(key)):
+                step = {**step, key: _spec.load_value(step[key])}
         if "choice" in step:
             step = {
                 **step,
@@ -1420,7 +1340,6 @@ def build_design_config(spec: DesignSpec) -> EnvConfig:
             wind_kts=env.wind_kts,
             turbulence_kts=env.turbulence_kts,
             gust_tau_s=env.gust_tau_s,
-            fly_arrival_times=env.fly_arrival_times,
         )
     except BuildError:
         raise

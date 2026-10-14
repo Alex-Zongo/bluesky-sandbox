@@ -1,7 +1,7 @@
-"""Own navigation meeting arrival times (``EnvConfig.fly_arrival_times``), and
-the two fields that say what the speed range cannot do about a fix's time.
+"""An FMS flying a fix's arrival time (a route step's ``rta``), and the two
+fields that say what the speed range cannot do about a fix's time.
 
-With it, each fix's arrival time is handed to BlueSky's RTA: on LNAV+VNAV the
+With it, the fix's arrival time is handed to BlueSky's RTA: on LNAV+VNAV the
 aircraft adjusts its speed to be over the fix on time, early or late alike.
 """
 
@@ -27,7 +27,7 @@ _FIX = Waypoint(lat=52.0, lon=5.5, reach_radius_nm=3.0)  # ~61 nm east
 
 
 class _Scenario:
-    def __init__(self, slack_s: float) -> None:
+    def __init__(self, slack_s: float, rta: bool = True) -> None:
         self.spawn = SpawnConfig(
             regions=[
                 SpawnRegion(
@@ -38,7 +38,7 @@ class _Scenario:
                         "spd_kts": (260, 260),
                         "hdg_deg": (90, 90),
                     },
-                    route=[{"waypoint": "fix", "arrival_slack_s": slack_s}],
+                    route=[{"waypoint": "fix", "arrival_slack_s": slack_s, "rta": rta}],
                 )
             ],
             aircraft_type="B744",
@@ -68,13 +68,8 @@ def _fly(slack_s: float, rta: bool) -> tuple[list[np.ndarray], float]:
     """Fly one aircraft to its fix on own navigation (LNAV+VNAV); return its
     observations along the way and how late (+) or early (-) it arrived."""
     env = BlueskyEnv(
-        scenario=_Scenario(slack_s),
-        config=EnvConfig(
-            dt=5.0,
-            obs_fields=_FIELDS,
-            action_fields=[act.HdgDeltaDeg()],
-            fly_arrival_times=rta,
-        ),
+        scenario=_Scenario(slack_s, rta),
+        config=EnvConfig(dt=5.0, obs_fields=_FIELDS, action_fields=[act.HdgDeltaDeg()]),
     )
     try:
         observations, _ = env.reset(seed=0)
@@ -150,7 +145,6 @@ def test_resuming_own_navigation_late_flies_the_on_time_speed_not_the_old_one(
             dt=5.0,
             obs_fields=_FIELDS,
             action_fields=[act.CommBroadcast()],  # leaves the aircraft alone
-            fly_arrival_times=True,
         ),
     )
     try:

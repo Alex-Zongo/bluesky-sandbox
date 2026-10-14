@@ -100,12 +100,11 @@ export function addWaypointAt(
   lat: number | null,
   lon: number | null,
   fix?: string,
-  altFt?: number,
 ): string {
   spec.queryables = spec.queryables ?? {};
   let name = base;
   for (let i = 1; spec.queryables[name]; i++) name = `${base}_${i}`;
   const point = addPoint(spec, pointRegion(lat, lon, fix), name);
-  spec.queryables[name] = { ...defaultWaypoint(altFt), shape: { ref: point } };
+  spec.queryables[name] = { ...defaultWaypoint(), shape: { ref: point } };
   return name;
 }

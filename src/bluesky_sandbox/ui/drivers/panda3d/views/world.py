@@ -969,16 +969,17 @@ class WorldView(Panda3DView):
             radius_nm = self._finite_constraint(
                 constraints.get(WaypointReadoutKey.RADIUS_NM)
             )
-            alt_tol_ft = self._finite_constraint(
-                constraints.get(WaypointReadoutKey.ALT_TOLERANCE_FT)
-            )
-            if radius_nm is not None or alt_tol_ft is not None:
+            alt_below_ft = self._finite_constraint(constraints.get(WaypointReadoutKey.ALT_BELOW_FT))
+            alt_above_ft = self._finite_constraint(constraints.get(WaypointReadoutKey.ALT_ABOVE_FT))
+            if radius_nm is not None or alt_below_ft is not None or alt_above_ft is not None:
+                # Its reach, else - for a window - rings the marker's size.
                 self._draw_waypoint_constraints(
                     ex,
                     ny,
                     up,
-                    radius_m=float(radius_nm or 0.0) * M_PER_NM,
-                    alt_tolerance_m=float(alt_tol_ft or 0.0) * ft,
+                    radius_m=radius if radius_nm is None else float(radius_nm) * M_PER_NM,
+                    below_m=None if alt_below_ft is None else alt_below_ft * ft,
+                    above_m=None if alt_above_ft is None else alt_above_ft * ft,
                 )
             ls = LineSegs()
             ls.setColor(Vec4(*rgb, 1.0))
@@ -1012,6 +1013,9 @@ class WorldView(Panda3DView):
                 label_lines.append(
                     f"ALT  FL{int(round(float(target_alt_ft) / 100)):03d}"
                 )
+                # Its window, under it.
+                if alt_below_ft is not None or alt_above_ft is not None:
+                    label_lines.append(f"ALT  {driver.format_window(alt_below_ft, alt_above_ft, 'FT')}")
             speed_min_kts = constraints.get(WaypointReadoutKey.SPEED_MIN_KTS)
             speed_max_kts = constraints.get(WaypointReadoutKey.SPEED_MAX_KTS)
             if speed_min_kts is not None or speed_max_kts is not None:
@@ -1035,9 +1039,8 @@ class WorldView(Panda3DView):
                         driver.format_waypoint_speed_lines(
                             idx,
                             target_kts=speed_kts,
-                            tolerance_kts=constraints.get(
-                                WaypointReadoutKey.SPEED_TOLERANCE_KTS
-                            ),
+                            below_kts=constraints.get(WaypointReadoutKey.SPEED_BELOW_KTS),
+                            above_kts=constraints.get(WaypointReadoutKey.SPEED_ABOVE_KTS),
                             alt_ft=target_alt_ft,
                             scheduled=bool(wp.get("scheduled"))
                             and WaypointReadoutKey.SPEED_KTS not in constraints
@@ -1047,8 +1050,6 @@ class WorldView(Panda3DView):
             label_lines.extend(driver.format_waypoint_time_lines(wp))
             if radius_nm is not None:
                 label_lines.append(f"R    {float(radius_nm):.1f} NM")
-            if alt_tol_ft is not None:
-                label_lines.append(f"TOL  +/-{int(round(float(alt_tol_ft)))} FT")
             label = "\n".join(label_lines)
             # A waypoint whose label the design turned off (render_label) keeps its mark only.
             if with_labels and label and wp.get("render_label", True):
@@ -1074,11 +1075,13 @@ class WorldView(Panda3DView):
         z: float,
         *,
         radius_m: float,
-        alt_tolerance_m: float,
+        below_m: float | None,
+        above_m: float | None,
     ) -> None:
-        if self._frame_root is None:
-            return
-        if radius_m <= 0.0 and alt_tolerance_m <= 0.0:
+        """A fix's reach and altitude window: a ring at it, and - where it has
+        a window - one at each end, joined, and a stub pointing the way an
+        open side runs ("at or above": up)."""
+        if self._frame_root is None or radius_m <= 0.0:
             return
         from panda3d.core import LineSegs, Vec4
 
@@ -1087,25 +1090,33 @@ class WorldView(Panda3DView):
         ls.setColor(Vec4(*rgb, 0.7))
         ls.setThickness(1.4)
         segs = 64
-        if radius_m > 0.0:
-            for level_z in {z, z - alt_tolerance_m, z + alt_tolerance_m}:
-                for i in range(segs + 1):
-                    t = 2 * math.pi * i / segs
-                    px = x + radius_m * math.cos(t)
-                    py = y + radius_m * math.sin(t)
-                    if i == 0:
-                        ls.moveTo(px, py, level_z)
-                    else:
-                        ls.drawTo(px, py, level_z)
-        if alt_tolerance_m > 0.0:
-            ls.moveTo(x, y, z - alt_tolerance_m)
-            ls.drawTo(x, y, z + alt_tolerance_m)
-            if radius_m > 0.0:
+        low = None if below_m is None else z - below_m
+        high = None if above_m is None else z + above_m
+        for level_z in {z, *(v for v in (low, high) if v is not None)}:
+            for i in range(segs + 1):
+                t = 2 * math.pi * i / segs
+                px = x + radius_m * math.cos(t)
+                py = y + radius_m * math.sin(t)
+                if i == 0:
+                    ls.moveTo(px, py, level_z)
+                else:
+                    ls.drawTo(px, py, level_z)
+        if low is not None or high is not None:
+            bottom = z if low is None else low
+            top = z if high is None else high
+            if top > bottom:
                 for t in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2):
                     px = x + radius_m * math.cos(t)
                     py = y + radius_m * math.sin(t)
-                    ls.moveTo(px, py, z - alt_tolerance_m)
-                    ls.drawTo(px, py, z + alt_tolerance_m)
+                    ls.moveTo(px, py, bottom)
+                    ls.drawTo(px, py, top)
+            stub = 3.0 * radius_m
+            if high is None:  # open above
+                ls.moveTo(x, y, top)
+                ls.drawTo(x, y, top + stub)
+            if low is None:  # open below
+                ls.moveTo(x, y, bottom)
+                ls.drawTo(x, y, bottom - stub)
         self._frame_root.attachNewNode(ls.create())
 
     @staticmethod

@@ -7,6 +7,7 @@ import { routeSteps } from "../route/namedRoute";
 import type { PreviewResult, SpecDict } from "../api";
 import { altRange, repValue } from "../specHelpers";
 import type {
+  CrossingWindow,
   Edge,
   Face,
   Mark,
@@ -260,8 +261,10 @@ export function addHandleDropStems(
   }
 }
 
+// A waypoint is a place: on the ground. How high each route crosses it is
+// the route's (see routePaths' windows).
 export function waypointPosition(q: any): [number, number, number] {
-  return [q.lon, q.lat, zMeters(q.alt_ft) + WAYPOINT_LIFT_M];
+  return [q.lon, q.lat, WAYPOINT_LIFT_M];
 }
 
 export function waypointDiscVertices(q: any, z: number, radiusNm: number): number[][] {
@@ -285,8 +288,10 @@ export function addWaypointStem(q: any, edges: WaypointEdge[]) {
     alt_ft: q.alt_ft,
     speed_kts: q.speed_kts,
     reach_radius_nm: q.reach_radius_nm,
-    alt_tolerance_ft: q.alt_tolerance_ft,
-    speed_tolerance_kts: q.speed_tolerance_kts,
+    alt_below_ft: q.alt_below_ft,
+    alt_above_ft: q.alt_above_ft,
+    speed_below_kts: q.speed_below_kts,
+    speed_above_kts: q.speed_above_kts,
     src: [q.lon, q.lat, 0],
     tgt: waypointPosition(q),
     color: [...WAYPOINT_STEM_COLOR],
@@ -307,13 +312,19 @@ export function waypointToleranceGeometry(
     alt_ft: q.alt_ft,
     speed_kts: q.speed_kts,
     reach_radius_nm: radiusNm,
-    alt_tolerance_ft: q.alt_tolerance_ft,
-    speed_tolerance_kts: q.speed_tolerance_kts,
+    alt_below_ft: q.alt_below_ft,
+    alt_above_ft: q.alt_above_ft,
+    speed_below_kts: q.speed_below_kts,
+    speed_above_kts: q.speed_above_kts,
   };
   const baseAlt = Number.isFinite(q.alt_ft) ? q.alt_ft : 0;
-  const hasHeight = Number.isFinite(q.alt_tolerance_ft) && q.alt_tolerance_ft > 0 && Number.isFinite(q.alt_ft);
-  const z0 = zMeters(hasHeight ? baseAlt - q.alt_tolerance_ft : baseAlt) + WAYPOINT_LIFT_M;
-  const z1 = zMeters(hasHeight ? baseAlt + q.alt_tolerance_ft : baseAlt) + WAYPOINT_LIFT_M;
+  // Its altitude window, from its lower end to its upper: an open side has no
+  // end, so it stops at the value there.
+  const below = Number.isFinite(q.alt_below_ft) ? q.alt_below_ft : 0;
+  const above = Number.isFinite(q.alt_above_ft) ? q.alt_above_ft : 0;
+  const hasHeight = (below > 0 || above > 0) && Number.isFinite(q.alt_ft);
+  const z0 = zMeters(hasHeight ? baseAlt - below : baseAlt) + WAYPOINT_LIFT_M;
+  const z1 = zMeters(hasHeight ? baseAlt + above : baseAlt) + WAYPOINT_LIFT_M;
   const bottom = waypointDiscVertices(q, z0, radiusNm);
   const top = hasHeight ? waypointDiscVertices(q, z1, radiusNm) : bottom;
   faces.push({ ...props, polygon: bottom, color: [color[0], color[1], color[2], 1] });
@@ -649,8 +660,7 @@ export function waypointPositions(spec: SpecDict | null, preview: PreviewResult 
     const g = sampledRegion ?? (region?.footprint ? frontendShapeGeometry(region) : null);
     if (!g?.vertices?.length) continue;
     const [clon, clat] = centroid(g.vertices);
-    const z = zMeters(Number.isFinite(repValue(q.alt_ft)) ? repValue(q.alt_ft) : 0) + WAYPOINT_LIFT_M;
-    positions.set(name, [clon, clat, z]);
+    positions.set(name, [clon, clat, WAYPOINT_LIFT_M]);
   }
   return positions;
 }
@@ -743,17 +753,40 @@ export function spawnRouteLinks(
   return links;
 }
 
-// A waypoint's altitude, ft, where it states one: its constraint - or, for one
-// whose altitude each aircraft draws from its envelope, the preview's
-// representative one. Null for a fix with no altitude.
-function waypointAltFt(spec: SpecDict, preview: PreviewResult, name: string): number | null {
-  const q: any = preview.queryables.find((x) => x.kind === "waypoint" && x.name === name);
-  const own = q ? (q.alt_ft ?? q.display_alt_ft) : repValue(spec.queryables?.[name]?.alt_ft);
-  return Number.isFinite(own) ? Number(own) : null;
+// The altitude, ft, a route step crosses its fix at, where it states one - a
+// range's middle. Null for a step with none, or one each aircraft draws.
+function stepAltFt(step: any): number | null {
+  const alt = step && typeof step === "object" ? repValue(step.alt_ft) : NaN;
+  return Number.isFinite(alt) ? alt : null;
 }
 
-// Each point's height along a route, m: a fix's own altitude where it states
-// one; between two that do, interpolated by distance along the route; before
+// The window a route step crosses its fix in: its altitude and the window
+// about it, or a range's span. Null for a step stating no altitude, or one
+// each aircraft draws (envelope, start).
+export function stepWindow(step: any): CrossingWindow | null {
+  const alt = step && typeof step === "object" ? step.alt_ft : null;
+  const side = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  if (typeof alt === "number") {
+    const below = side(step.alt_below_ft);
+    const above = side(step.alt_above_ft);
+    const lo = below == null ? alt : alt - below;
+    const hi = above == null ? alt : alt + above;
+    const text =
+      below != null && above != null ? (lo === hi ? `${alt} ft` : `${lo}–${hi} ft`)
+      : below != null ? `≥${lo} ft`
+      : above != null ? `≤${hi} ft`
+      : `${alt} ft`;
+    // A window stated on one side only is open on the other.
+    const windowed = below != null || above != null;
+    return { lo, hi, openBelow: windowed && below == null, openAbove: windowed && above == null, text };
+  }
+  if (alt?.type === "range" && Number.isFinite(+alt.low) && Number.isFinite(+alt.high)) {
+    return { lo: +alt.low, hi: +alt.high, openBelow: false, openAbove: false, text: `${alt.low}–${alt.high} ft, drawn` };
+  }
+  return null;
+}
+
+// Each point's height along a route, m: the altitude its step states there; between two that do, interpolated by distance along the route; before
 // the first and after the last, level with it. With which are inferred - none
 // is, on a route whose every fix states an altitude; all, on one where none
 // does (and those stay on the ground).
@@ -793,12 +826,13 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
   // route: {route: name} steps inline (cycle-guarded), {choice: [...]} branches
   // fan out into one path per branch. Mirrors spawn.expand_route_paths so the
   // whole STAR/SID network draws, not just one limb.
-  const enumerate = (steps: any, seenRefs: Set<string> = new Set()): string[][] => {
+  type Fix = { name: string; alt: number | null; window: CrossingWindow | null };
+  const enumerate = (steps: any, seenRefs: Set<string> = new Set()): Fix[][] => {
     if (!Array.isArray(steps)) return [[]];
-    let paths: string[][] = [[]];
+    let paths: Fix[][] = [[]];
     for (const s of steps) {
       if (s && typeof s === "object" && Array.isArray(s.choice)) {
-        const branchPaths: string[][] = [];
+        const branchPaths: Fix[][] = [];
         for (const branch of s.choice) {
           const branchSteps = Array.isArray(branch) ? branch : [branch];
           branchPaths.push(...enumerate(branchSteps, seenRefs));
@@ -810,17 +844,17 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
           paths = paths.flatMap((p) => sub.map((sp) => [...p, ...sp]));
         }
       } else if (s && typeof s === "object" && typeof s.waypoint === "string") {
-        // Constrained {waypoint: name, speed_kts?, alt_ft?} step: name only.
-        paths = paths.map((p) => [...p, s.waypoint]);
+        // A {waypoint: name, ...crossing} step: its fix, at its altitude.
+        paths = paths.map((p) => [...p, { name: s.waypoint, alt: stepAltFt(s), window: stepWindow(s) }]);
       } else if (typeof s === "string") {
-        paths = paths.map((p) => [...p, s]);
+        paths = paths.map((p) => [...p, { name: s, alt: null, window: null }]);
       }
     }
     return paths;
   };
   // Drop consecutive duplicate waypoints so a shared junction joins cleanly.
-  const collapse = (names: string[]): string[] =>
-    names.filter((n, i) => i === 0 || n !== names[i - 1]);
+  const collapse = (fixes: Fix[]): Fix[] =>
+    fixes.filter((f, i) => i === 0 || f.name !== fixes[i - 1].name);
   const add = (key: string, name: string, steps: any) => {
     if (!Array.isArray(steps) || seen.has(key)) return;
     seen.add(key);
@@ -832,15 +866,16 @@ export function routePaths(spec: SpecDict | null, preview: PreviewResult | null)
     const color = own ? cssToRgb(own) : ROUTE_PALETTE[colorIndex++ % ROUTE_PALETTE.length];
     const drawn = new Set<string>();
     for (const path of enumerate(steps)) {
-      const names = collapse(path).filter((n) => positions.has(n));
+      const fixes = collapse(path).filter((f) => positions.has(f.name));
+      const names = fixes.map((f) => f.name);
       if (names.length < 2) continue;
       const flat = names.map((n) => [positions.get(n)![0], positions.get(n)![1]] as [number, number]);
       const ptKey = flat.map((p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`).join("|");
       if (drawn.has(ptKey)) continue;
       drawn.add(ptKey);
-      const { z, inferred } = routeHeights(flat, names.map((n) => waypointAltFt(spec, preview, n)));
+      const { z, inferred } = routeHeights(flat, fixes.map((f) => f.alt));
       const points = flat.map(([lon, lat], i) => [lon, lat, z[i]] as [number, number, number]);
-      out.push({ key, name, color, points, names, inferred });
+      out.push({ key, name, color, points, names, inferred, windows: fixes.map((f) => f.window) });
     }
   };
 

@@ -46,7 +46,7 @@ from bluesky_sandbox.sim.bounds import (
 )
 from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.queryables import Queryable, QueryRegion, Waypoint
-from bluesky_sandbox.sim.spawn import SpawnConfig, map_route_steps
+from bluesky_sandbox.sim.spawn import SpawnConfig, draw_crossings, map_route_steps
 
 from . import transforms as _t
 from .base import EpisodeSpec, Scenario
@@ -109,10 +109,12 @@ class RandomizedScenario(Scenario):
     # (queryable), "s:<name>" (spawn region), "b:<name>" (named bounds).
     # Supersedes ``rotation`` when set.
     groups: tuple[dict[str, Any], ...] | None = None
-    # name -> Bounds a waypoint's position (lat/lon, and altitude) is drawn from per episode.
+    # name -> Bounds a waypoint's position is drawn from per episode - and, where
+    # its altitude band varies, the altitude its route steps state there.
     sampled_waypoints: dict[str, Bounds] = field(default_factory=dict)
-    # name -> {field: value|range|dist} for waypoint constraint/target fields that
-    # are resampled each episode (reach radius, tolerances, target alt/speed).
+    # name -> {field: value|range|dist}: a waypoint's fields (its reach radius)
+    # drawn anew each episode. A route step's crossing numbers given as a range
+    # or distribution are drawn each episode too (``draw_crossings``).
     waypoint_fields: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Optional per-episode geometry hook, called with the episode rng at the top
     # of ``sample()``. Returns replacements for any of ``airspace_bounds`` /
@@ -162,7 +164,7 @@ class RandomizedScenario(Scenario):
             object.__setattr__(self, name, value)
 
     def _sample_queryables(self, rng: np.random.Generator) -> dict[str, Queryable]:
-        """Return queryables with per-episode waypoint randomization applied."""
+        """Queryables with per-episode waypoint randomization applied."""
         if not self.sampled_waypoints and not self.waypoint_fields:
             return self.queryables
         out: dict[str, Queryable] = {}
@@ -170,15 +172,7 @@ class RandomizedScenario(Scenario):
             region = self.sampled_waypoints.get(name)
             if region is not None and isinstance(q, Waypoint):
                 lat, lon = region.sample_point(rng)
-                updates: dict[str, Any] = {"lat": lat, "lon": lon, "waypoint": None, "at": None}
-                # Draw altitude from the region's band too, but only when the
-                # waypoint actually has an altitude target and the band varies.
-                band = getattr(region, "alt_band_at", None)
-                if band is not None and q.alt_ft is not None:
-                    lo, hi = band(lat, lon)
-                    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-                        updates["alt_ft"] = float(rng.uniform(lo, hi))
-                q = replace(q, **updates)
+                q = replace(q, lat=lat, lon=lon, waypoint=None, at=None)
             fields = self.waypoint_fields.get(name)
             if fields and isinstance(q, Waypoint):
                 updates = {f: _t.sample_scalar(v, rng) for f, v in fields.items()}
@@ -190,6 +184,21 @@ class RandomizedScenario(Scenario):
                 q = replace(q, **updates)
             out[name] = q
         return out
+
+    def _sample_spawn(self, rng: np.random.Generator) -> SpawnConfig:
+        """The spawn config with its route steps' crossing ranges drawn for
+        this episode."""
+        spawn = self.spawn
+        return replace(
+            spawn,
+            routes={name: draw_crossings(route, rng) for name, route in (spawn.routes or {}).items()},
+            route=None if spawn.route is None else draw_crossings(spawn.route, rng),
+            regions=[
+                region if region.route is None or isinstance(region.route, str) or hasattr(region.route, "rvs")
+                else replace(region, route=draw_crossings(region.route, rng))
+                for region in spawn.regions
+            ],
+        )
 
     # ------------------------------------------------------------------ groups
     def _bbox_points(
@@ -257,9 +266,9 @@ class RandomizedScenario(Scenario):
         self,
         queryables: dict[str, Queryable],
         rng: np.random.Generator,
+        spawn: SpawnConfig,
     ) -> EpisodeSpec:
         airspace = self.airspace_bounds
-        spawn = self.spawn
         groups, subtree, chain = self._group_geometry()
 
         # Sample one transform per group (rotation angle, east/north translation,
@@ -434,6 +443,7 @@ class RandomizedScenario(Scenario):
     def sample(self, rng: np.random.Generator) -> EpisodeSpec:
         self._apply_episode_geometry(rng)
         queryables = self._sample_queryables(rng)
+        spawn = self._sample_spawn(rng)
         # Record the episode's whole-geometry rotation draw so tooling (the
         # designer's map preview) can present other geometry - e.g. named
         # regions - in the same episode frame. None when rotation doesn't
@@ -441,9 +451,9 @@ class RandomizedScenario(Scenario):
         object.__setattr__(self, "last_rotation", None)
         object.__setattr__(self, "last_group_maps", None)
         if self.groups:
-            return self._apply_groups(dict(queryables), rng)
+            return self._apply_groups(dict(queryables), rng, spawn)
         if self.rotation is None:
-            return _episode_spec(self, self.airspace_bounds, self.spawn, queryables)
+            return _episode_spec(self, self.airspace_bounds, spawn, queryables)
         angle = _t.sample_scalar(self.rotation["angle"], rng)
         pivot = self.rotation.get("pivot") or _default_pivot(self)
         object.__setattr__(self, "last_rotation", {"pivot": pivot, "angle": angle})
@@ -455,7 +465,7 @@ class RandomizedScenario(Scenario):
         queryables = {
             name: _t.rotate_queryable(q, pivot, angle) for name, q in queryables.items()
         }
-        spawn = _t.rotate_spawn(self.spawn, pivot, angle)
+        spawn = _t.rotate_spawn(spawn, pivot, angle)
         named = {
             name: _t.rotate_bounds(b, pivot, angle) for name, b in self.shapes.items()
         }

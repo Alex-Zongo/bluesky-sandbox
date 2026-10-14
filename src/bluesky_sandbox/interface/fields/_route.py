@@ -1,36 +1,17 @@
-"""Reading an aircraft's BlueSky route.
+"""Reading an aircraft's route, fix by fix (:func:`~bluesky_sandbox.sim.fixes.fix_at`).
 
 Shared by the active-route-waypoint observations and the route-relative actions,
-so both read the same target.
+so both read the same fix.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 import bluesky as bs
 import numpy as np
-from bluesky.tools.aero import nm, vtas2cas
+from bluesky.tools.aero import ft, kts, nm, vtas2cas
 from bluesky.tools.geo import kwikqdrdist
 
-from bluesky_sandbox.sim.performance.speeds import as_cas_ms
-
-from ._state import arrival_time
-
-
-def _route_constraint(values: Any, iact: int) -> float | None:
-    """Read a per-waypoint constraint (e.g. ``wpalt``/``wpspd``) at ``iact``.
-
-    Returns ``None`` for a missing or unspecified constraint; BlueSky stores
-    "not specified" as a negative sentinel.
-    """
-    try:
-        value = float(values[iact])
-    except (IndexError, TypeError, ValueError):
-        return None
-    if np.isfinite(value) and value >= 0.0:
-        return value
-    return None
+from bluesky_sandbox.sim.fixes import fix_at
 
 
 def _route_index(idx: int, offset: int = 0) -> int | None:
@@ -73,45 +54,25 @@ def _active_route_waypoint(
     - actions command the leg actually being flown, never a future one) so
     both read the same target.
     """
-    routes = getattr(bs.traf.ap, "route", None) if bs.traf is not None else None
-    if routes is None or idx < 0 or idx >= len(routes):
+    target = _route_index(idx, offset)
+    fix = None if target is None else fix_at(idx, target)
+    if fix is None or not (np.isfinite(fix.lat) and np.isfinite(fix.lon)):
         return None
-    route = routes[idx]
-    try:
-        iact = int(route.iactwp)
-        nwp = int(route.nwp or 0)
-    except (TypeError, ValueError):
-        return None
-    if iact < 0:
-        return None
-    target = iact + offset
-    if target < 0 or target >= nwp:
-        return None
-    try:
-        lat = float(route.wplat[target])
-        lon = float(route.wplon[target])
-    except (IndexError, TypeError, ValueError):
-        return None
-    if not (np.isfinite(lat) and np.isfinite(lon)):
-        return None
-    alt = _route_constraint(route.wpalt, target)
-    speed = _route_constraint(route.wpspd, target)
-    if speed is not None:
-        # A fix's speed may be a Mach (a scenario's route): as CAS, at the
-        # fix's altitude - else the aircraft's - read as BlueSky reads it.
-        speed = float(as_cas_ms(speed, float(bs.traf.alt[idx]) if alt is None else alt))
+    crossing = fix.crossing
+    alt = None if crossing.alt_ft is None else crossing.alt_ft * ft
+    if crossing.speed_kts is not None:
+        speed = crossing.speed_kts * kts
     else:
-        speed = _scheduled_cas_ms(idx, target, offset)
-    return (lat, lon, alt, speed)
+        speed = _scheduled_cas_ms(idx, fix.due_s, offset)
+    return (fix.lat, fix.lon, alt, speed)
 
 
-def _scheduled_cas_ms(idx: int, route_index: int, offset: int) -> float | None:
-    """The CAS that gets the aircraft at ``idx`` over route fix ``route_index``
-    at its target arrival time, or ``None`` when it has none: the along-route
-    distance left over the time to go, in the wind the aircraft flies in now.
-    Overdue, its maximum. Late, that is faster; early, slower - and below its
-    minimum speed, only a longer path loses the rest."""
-    due = arrival_time(idx, route_index)
+def _scheduled_cas_ms(idx: int, due: float | None, offset: int) -> float | None:
+    """The CAS that gets the aircraft at ``idx`` over the route fix ``offset``
+    legs ahead at its arrival time ``due``, or ``None`` with no time: the
+    along-route distance left over the time to go, in the wind the aircraft
+    flies in now. Overdue, its maximum. Late, that is faster; early, slower -
+    and below its minimum speed, only a longer path loses the rest."""
     dist_nm = None if due is None else _route_along_distance_nm(idx, offset)
     if dist_nm is None:
         return None

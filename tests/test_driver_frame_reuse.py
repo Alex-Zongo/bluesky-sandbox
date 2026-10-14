@@ -32,14 +32,14 @@ class _Scenario:
                 RegionBounds(BoxFootprint(51.6, 52.4, 4.0, 5.0), ConstantAltitudeBand(0, 40_000)),
                 color="cyan",
             ),
-            "WP1": Waypoint(lat=52.0, lon=6.0, alt_ft=20_000),
+            "WP1": Waypoint(lat=52.0, lon=6.0),
             "WP2": Waypoint(lat=51.5, lon=4.5),
         }
         region = SpawnRegion(
             bounds=RegionBounds(BoxFootprint(51.2, 52.8, 3.5, 6.0)),
             n_aircraft=5,
             params={"alt_ft": (10_000, 30_000), "spd_kts": (250, 250)},
-            route=["WP1"],
+            route=[{"waypoint": "WP1", "alt_ft": 20_000}],
         )
         return EpisodeSpec(
             airspace_bounds=None,
@@ -68,9 +68,12 @@ def test_tsas_rows_are_the_waypoints_current_state():
         _step(env)
         driver = env._driver
         tsas = TsasDataMixin()
-        for _name, waypoint in tsas.tsas_waypoints(driver):
-            rows = tsas.tsas_aircraft_rows(waypoint, driver)
+        for name, waypoint in tsas.tsas_waypoints(driver):
+            rows = tsas.tsas_aircraft_rows(name, waypoint, driver)
             assert [row.idx for row in rows] != [] and len(rows) == bs.traf.ntraf
+            if name == "WP1":
+                # Against each aircraft's route crossing there: FL200.
+                assert not any(math.isnan(row.alt_diff_ft) for row in rows)
             for row in rows:
                 current = waypoint.current_state(row.idx)
                 assert row.acid == bs.traf.id[row.idx]

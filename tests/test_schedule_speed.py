@@ -21,13 +21,16 @@ from bluesky_sandbox.interface.fields import actions as act
 from bluesky_sandbox.interface.fields import observations as obs
 from bluesky_sandbox.sim.arrival import planned_legs
 from bluesky_sandbox.sim.bounds import BoxFootprint, RegionBounds
+from bluesky_sandbox.sim.fixes import ROUTES
 from bluesky_sandbox.sim.queryables import Waypoint
 from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import SpawnConfig, SpawnRegion
 
+# The gated fix as its route crosses it: FL200 at 230 KT.
+_GATED = {"waypoint": "gated", "alt_ft": 20_000, "speed_kts": 230}
 _QUERYABLES = {
     "free": Waypoint(lat=52.0, lon=6.0),
-    "gated": Waypoint(lat=52.0, lon=6.0, alt_ft=20_000, speed_kts=230),
+    "gated": Waypoint(lat=52.0, lon=6.0),
     "exit": Waypoint(lat=52.0, lon=7.0),
 }
 
@@ -137,7 +140,7 @@ def test_after_a_slow_deviation_zero_catches_up():
 
 
 def test_a_gated_fix_keeps_its_gate():
-    env, agent = _fly([{"waypoint": "gated", "arrival_slack_s": 120.0}, "exit"])
+    env, agent = _fly([{**_GATED, "arrival_slack_s": 120.0}, "exit"])
     try:
         _clear(env, agent, 0.0)
         assert _selected_kts(agent) == pytest.approx(230.0, abs=1.0)
@@ -171,10 +174,9 @@ def test_with_no_arrival_time_zero_is_the_current_speed():
 
 
 def test_arrival_times_plan_each_leg_from_the_gates_passed():
-    env, _agent = _fly([{"waypoint": "gated", "arrival_slack_s": 0.0}, "exit"])
+    env, _agent = _fly([{**_GATED, "arrival_slack_s": 0.0}, "exit"])
     try:
-        targets = [_QUERYABLES["gated"].target, _QUERYABLES["exit"].target]
-        (level0, cas0), (level1, cas1) = planned_legs(0, targets)
+        (level0, cas0), (level1, cas1) = planned_legs(0, ROUTES.route(0).fixes)
         assert level0 / ft == pytest.approx(20_000.0, abs=1.0)
         assert cas0 / kts == pytest.approx(250.0, abs=1.0)
         assert (level1 / ft, cas1 / kts) == pytest.approx((20_000.0, 230.0))

@@ -1135,6 +1135,8 @@ export default function ShapeEditor({
         regionNames={otherNames}
       />
       </section>
+      {/* A waypoint is a place: how high a route crosses it is the route's. */}
+      {!pointOnly && (
       <section className="be-section">
         <div className="be-head">
           <span className="be-title">altitude</span>
@@ -1160,6 +1162,7 @@ export default function ShapeEditor({
         />
       )}
       </section>
+      )}
     </div>
   );
 }

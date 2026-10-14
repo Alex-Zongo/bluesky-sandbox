@@ -97,7 +97,7 @@ class _Scenario:
                     bounds=RegionBounds(BoxFootprint(51.9, 52.1, 4.5, 4.9)),
                     n_aircraft=20,
                     params={"alt_ft": (8_000, 12_000), "spd_kts": (230, 290)},
-                    route=["merge"],
+                    route=[{"waypoint": "merge", "alt_ft": 9_000, "speed_kts": 250}],
                 )
             ],
             aircraft_type=aircraft_type,
@@ -112,7 +112,7 @@ class _Scenario:
             airspace_bounds=None,
             spawn=self.spawn,
             queryables={
-                "merge": Waypoint(lat=52.0, lon=4.8, alt_ft=9_000, speed_kts=250)
+                "merge": Waypoint(lat=52.0, lon=4.8)
             },
             max_aircraft=20,
         )

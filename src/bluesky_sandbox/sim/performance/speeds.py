@@ -280,62 +280,72 @@ def crossover_speed_state(idx: int, target_cas_ms: float) -> CrossoverSpeedState
     )
 
 
-def cas_tolerance_as_mach(idx: int, target_cas_ms: float, tolerance_kts: float) -> float:
-    """Symmetric Mach tolerance equivalent to a CAS ``tolerance_kts`` band around
-    ``target_cas_ms`` at the aircraft's current altitude. Lets a single CAS
-    tolerance stay well-defined above the CAS/Mach crossover, where the speed
-    constraint is evaluated in Mach - the regime the aircraft is controlled in."""
-    alt = float(bs.traf.alt[idx])
-    tol_ms = float(tolerance_kts) * kts
-    hi = float(vcas2mach(target_cas_ms + tol_ms, alt))
-    lo = float(vcas2mach(max(target_cas_ms - tol_ms, 0.0), alt))
-    return abs(hi - lo) / 2.0
+def _side(reach) -> np.ndarray:
+    """A window side as an array of knots, ``inf`` where open (``None``/NaN)."""
+    if reach is None:
+        return np.asarray(np.inf)
+    reach = np.asarray(reach, dtype=np.float64)
+    return np.where(np.isfinite(reach), reach, np.inf)
 
 
-def within_speed_tolerance(
+def _mach_window(target_cas_ms, below_kts, above_kts, alt):
+    """A CAS window about ``target_cas_ms`` as Mach offsets at ``alt``: how far
+    below and above the target's Mach it reaches (an open side ``inf``)."""
+    below, above = _side(below_kts), _side(above_kts)
+    target_mach = vcas2mach(target_cas_ms, alt)
+    finite_below, finite_above = np.isfinite(below), np.isfinite(above)
+    low_cas = np.maximum(target_cas_ms - np.where(finite_below, below, 0.0) * kts, 0.0)
+    high_cas = target_cas_ms + np.where(finite_above, above, 0.0) * kts
+    low = np.where(finite_below, target_mach - vcas2mach(low_cas, alt), np.inf)
+    high = np.where(finite_above, vcas2mach(high_cas, alt) - target_mach, np.inf)
+    return low, high
+
+
+def within_speed_window(
     idx: int,
     target_cas_ms: float,
-    tolerance_kts: float | None,
-    tolerance_mach: float | None = None,
+    below_kts: float | None,
+    above_kts: float | None,
 ) -> bool:
-    """Whether the aircraft meets a waypoint speed tolerance, regime-aware.
-
-    Below the CAS/Mach crossover the CAS tolerance (``tolerance_kts``) binds;
-    above it the Mach tolerance binds - the explicit ``tolerance_mach`` when
-    given, otherwise one derived from ``tolerance_kts`` via
-    :func:`cas_tolerance_as_mach` - so the check is well-defined for *any*
-    sampled target speed/altitude. A ``None`` tolerance in the active regime
-    leaves the speed axis unconstrained (returns ``True``). The target CAS is
-    clamped to the feasible envelope by :func:`crossover_speed_state`, so an
-    out-of-envelope sampled target still yields a satisfiable band.
-    """
+    """Whether the aircraft's speed lies in a waypoint's window: no more than
+    ``below_kts`` under its target CAS, no more than ``above_kts`` over it (an
+    unset side unbounded) - regime-aware: in CAS below the CAS/Mach
+    crossover, in Mach above it, the window then converted at the aircraft's
+    altitude. The target CAS is clamped to the feasible envelope by
+    :func:`crossover_speed_state`, so an out-of-envelope sampled target still
+    yields a satisfiable window."""
+    if below_kts is None and above_kts is None:
+        return True
     state = crossover_speed_state(idx, target_cas_ms)
     if state.in_mach:
-        tol = tolerance_mach
-        if tol is None and tolerance_kts is not None:
-            tol = cas_tolerance_as_mach(idx, target_cas_ms, tolerance_kts)
-        return tol is None or abs(state.mach_diff) <= tol
-    return tolerance_kts is None or abs(state.cas_diff_kts) <= float(tolerance_kts)
+        low, high = _mach_window(target_cas_ms, below_kts, above_kts, float(bs.traf.alt[idx]))
+        return bool(-low <= state.mach_diff <= high)
+    return bool(-_side(below_kts) <= state.cas_diff_kts <= _side(above_kts))
 
 
-def within_speed_tolerance_many(
+def within_speed_window_many(
     n: int,
     target_cas_ms: np.ndarray,
-    tolerance_kts: float | None,
-    tolerance_mach: float | None = None,
+    below_kts,
+    above_kts,
 ) -> np.ndarray:
-    """Vectorized :func:`within_speed_tolerance` over the first ``n`` traf rows.
+    """Vectorized :func:`within_speed_window` over the first ``n`` traf rows.
 
     ``target_cas_ms`` is a per-aircraft target CAS array (m/s); a non-finite
     entry means that aircraft's speed axis is unconstrained (``True``), matching
-    the scalar path's treatment of a missing target. Element-wise identical to
+    the scalar path's treatment of a missing target. ``below_kts`` /
+    ``above_kts`` are each a number or ``None`` for every aircraft, or an array
+    with one per aircraft, NaN where that side is open. Element-wise identical to
     the scalar function - same clamped-target regime split, the same raw-target
-    CAS->Mach tolerance band - but one numpy pass instead of a per-aircraft
-    Python loop, which is what makes per-substep dwell tracking affordable.
+    CAS->Mach window - but one numpy pass instead of a per-aircraft loop, which
+    is what makes per-substep dwell tracking affordable.
     """
     ok = np.ones(n, dtype=bool)
-    if n == 0 or (tolerance_kts is None and tolerance_mach is None):
+    if n == 0 or (below_kts is None and above_kts is None):
         return ok
+    below_kts, above_kts = _side(below_kts), _side(above_kts)
+    below_kts = below_kts[:n] if below_kts.ndim else below_kts
+    above_kts = above_kts[:n] if above_kts.ndim else above_kts
     target = np.asarray(target_cas_ms, dtype=np.float64)[:n]
     have = np.isfinite(target)
     if not have.any():
@@ -357,22 +367,9 @@ def within_speed_tolerance_many(
     in_mach = limited & (alt > crossoveralt(tgt, np.where(limited, mmo, 0.8)))
 
     cas_diff_kts = (cas - tgt) * _MS_TO_KTS
-    target_mach = np.minimum(vcas2mach(tgt, alt), mmo)
-    mach_diff = mach - target_mach
-
-    if tolerance_mach is not None:
-        satisfied_mach = np.abs(mach_diff) <= float(tolerance_mach)
-    elif tolerance_kts is not None:
-        # As in the scalar path, the derived Mach band brackets the *raw*
-        # (unclamped) target CAS.
-        tol_ms = float(tolerance_kts) * kts
-        hi = vcas2mach(raw_target + tol_ms, alt)
-        lo = vcas2mach(np.maximum(raw_target - tol_ms, 0.0), alt)
-        satisfied_mach = np.abs(mach_diff) <= np.abs(hi - lo) / 2.0
-    else:
-        satisfied_mach = np.ones(n, dtype=bool)
-    if tolerance_kts is not None:
-        satisfied_cas = np.abs(cas_diff_kts) <= float(tolerance_kts)
-    else:
-        satisfied_cas = np.ones(n, dtype=bool)
+    mach_diff = mach - np.minimum(vcas2mach(tgt, alt), mmo)
+    # As in the scalar path, the Mach window brackets the *raw* target CAS.
+    mach_low, mach_high = _mach_window(raw_target, below_kts, above_kts, alt)
+    satisfied_mach = (mach_diff >= -mach_low) & (mach_diff <= mach_high)
+    satisfied_cas = (cas_diff_kts >= -below_kts) & (cas_diff_kts <= above_kts)
     return np.where(have, np.where(in_mach, satisfied_mach, satisfied_cas), True)

@@ -26,7 +26,7 @@ from .test_designer import _example_design_spec
 def intel():
     design = _example_design_spec()
     design.queryables["wp"] = S.dump(
-        Waypoint(lat=52.0, lon=4.5, alt_ft=3000, color="magenta")
+        Waypoint(lat=52.0, lon=4.5, color="magenta")
     )
     design.env.hook_setup = (
         "import numpy as np\nSCALE = np.ones(1)\ndef _half(x, by=2):\n    return x / by"

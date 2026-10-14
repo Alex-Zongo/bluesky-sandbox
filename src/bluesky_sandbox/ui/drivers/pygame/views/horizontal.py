@@ -1120,6 +1120,11 @@ class HorizontalView(PygameView):
                 label_lines.append(
                     f"ALT  FL{int(round(float(target_alt_ft) / 100)):03d}"
                 )
+                # Its window, under it.
+                alt_below = constraints.get(WaypointReadoutKey.ALT_BELOW_FT)
+                alt_above = constraints.get(WaypointReadoutKey.ALT_ABOVE_FT)
+                if alt_below is not None or alt_above is not None:
+                    label_lines.append(f"ALT  {driver.format_window(alt_below, alt_above, 'FT')}")
             speed_min_kts = constraints.get(WaypointReadoutKey.SPEED_MIN_KTS)
             speed_max_kts = constraints.get(WaypointReadoutKey.SPEED_MAX_KTS)
             if speed_min_kts is not None or speed_max_kts is not None:
@@ -1143,9 +1148,8 @@ class HorizontalView(PygameView):
                         driver.format_waypoint_speed_lines(
                             idx,
                             target_kts=speed_kts,
-                            tolerance_kts=constraints.get(
-                                WaypointReadoutKey.SPEED_TOLERANCE_KTS
-                            ),
+                            below_kts=constraints.get(WaypointReadoutKey.SPEED_BELOW_KTS),
+                            above_kts=constraints.get(WaypointReadoutKey.SPEED_ABOVE_KTS),
                             alt_ft=target_alt_ft,
                             scheduled=bool(wp.get("scheduled"))
                             and WaypointReadoutKey.SPEED_KTS not in constraints
@@ -1153,11 +1157,8 @@ class HorizontalView(PygameView):
                         )
                     )
             label_lines.extend(driver.format_waypoint_time_lines(wp))
-            alt_tol_ft = constraints.get(WaypointReadoutKey.ALT_TOLERANCE_FT)
             if radius_nm is not None:
                 label_lines.append(f"R    {float(radius_nm):.1f} NM")
-            if alt_tol_ft is not None:
-                label_lines.append(f"TOL  +/-{int(round(float(alt_tol_ft)))} FT")
             label = "\n".join(label_lines)
             # A waypoint whose label the design turned off (render_label) keeps its mark only.
             if not with_labels or not driver.show_labels or driver.font is None or not label or not wp.get("render_label", True):

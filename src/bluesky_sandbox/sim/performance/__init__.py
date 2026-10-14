@@ -38,11 +38,10 @@ from .speeds import (
     Crossover,
     CrossoverSpeedState,
     cas_ceiling_ms,
-    cas_tolerance_as_mach,
     crossover_display,
     crossover_speed_state,
-    within_speed_tolerance,
-    within_speed_tolerance_many,
+    within_speed_window,
+    within_speed_window_many,
 )
 
 __all__ = [
@@ -63,7 +62,6 @@ __all__ = [
     "CrossoverSpeedState",
     "EnvelopeSample",
     "cas_ceiling_ms",
-    "cas_tolerance_as_mach",
     "crossover_display",
     "crossover_speed_state",
     "feasible_alt_cas",
@@ -73,6 +71,6 @@ __all__ = [
     "fleet_max_cas_kt",
     "fleet_sim_ceiling_ft",
     "fleet_speed_band_kt",
-    "within_speed_tolerance",
-    "within_speed_tolerance_many",
+    "within_speed_window",
+    "within_speed_window_many",
 ]

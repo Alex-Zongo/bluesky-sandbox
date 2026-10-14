@@ -56,6 +56,7 @@ from bluesky_sandbox.interface.task import (
     BaseAgentInfo,
     BaseObs,
 )
+from bluesky_sandbox.sim.fixes import ROUTES
 from bluesky_sandbox.sim.queryables import (
     Queryable,
     QueryRegion,
@@ -85,7 +86,6 @@ from .state import (
     AircraftControlState,
     AircraftControlStates,
     Callsign,
-    ResolvedRoute,
     SpawnPosition,
     SpawnProgress,
     SpawnRecord,
@@ -101,7 +101,6 @@ __all__ = [
     "BlueskyBaseEnvironment",
     "Callsign",
     "RenderMode",
-    "ResolvedRoute",
     "SpawnPosition",
     "SpawnProgress",
     "SpawnRecord",
@@ -463,6 +462,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._spawn_generator.begin_episode(self._rng)
         self._invalidate_agent_cache()
         self._query_state_monitor.clear()
+        ROUTES.clear()
 
         # ``bs.sim.reset()`` clears traffic-attached state; CDMETHOD and ASAS
         # toggle don't always survive, so re-issue both to keep conflict
@@ -529,11 +529,10 @@ class BlueskyBaseEnvironment(ParallelEnv):
         with timer.phase("actions"):
             applied = self._apply_actions(actions)
 
-        # Own navigation meeting arrival times: BlueSky's RTA gives up on a
-        # fix whose time has passed, so an overdue aircraft flies flat out.
+        # An FMS flying an arrival time: BlueSky's RTA gives up on a fix whose
+        # time has passed, so an overdue aircraft flies flat out.
         with timer.phase("actions"):
-            if self.config.fly_arrival_times:
-                hurry_overdue()
+            hurry_overdue()
 
         # A steady field is applied once at reset; only a gusting one needs
         # pushing into BlueSky again each step.
@@ -788,24 +787,15 @@ class BlueskyBaseEnvironment(ParallelEnv):
         """Return when an aircraft entered the environment."""
         return self._aircraft_spawn_time.get(acid, default)
 
-    def replace_aircraft_route(
-        self,
-        callsign: Callsign,
-        _queryables,
-        route,
-        *,
-        commit: bool = True,
-    ) -> None:
-        """Replace one aircraft route through the bound BlueSky runtime."""
-        resolved_route = self._spawn_generator.resolve_route(callsign, route, self._rng)
-        self._runtime.replace_aircraft_route(
+    def replace_aircraft_route(self, callsign: Callsign, route) -> None:
+        """Give one aircraft ``route`` (route steps) in place of the one it has -
+        resolved for it, its arrival times drawn anew, as at spawn."""
+        generator = self._spawn_generator
+        generator.fly_route(
             callsign,
-            None if resolved_route is None else resolved_route.targets,
-            commit=commit,
-        )
-        self._query_state_monitor.set_aircraft_route(
-            callsign,
-            None if resolved_route is None else resolved_route.names,
+            generator.resolve_route(callsign, route, self._rng),
+            self._rng,
+            replace_route=True,
         )
 
     def spawn(
@@ -1050,6 +1040,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._aircraft_spawn_time.pop(acid, None)
         self._aircraft_region.pop(acid, None)
         self._query_state_monitor.clear_aircraft_route(acid)
+        ROUTES.forget(acid)
         for obs_field in self._stateful_fields:
             obs_field.on_aircraft_removed(acid)
         return was_controlled

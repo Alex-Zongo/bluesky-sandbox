@@ -1092,6 +1092,8 @@ button:disabled {
 .rf-branch { background: var(--node-amber-bg); border-color: var(--node-amber); border-radius: 50%; padding: 6px 8px; }
 .rf-merge { background: var(--raised); border-radius: 50%; padding: 0; }
 
+.rf-node-text { display: flex; flex-direction: column; line-height: 1.25; }
+.rf-node-xing { font-size: 10px; color: var(--muted); }
 .rf-node-x {
   background: none;
   border: none;
@@ -2077,6 +2079,11 @@ button:disabled {
   width: 56px;
   padding: 1px 4px;
 }
+
+.route-xing-edit {
+  flex-wrap: wrap;
+}
+
 
 .route-assign-list {
   display: flex;

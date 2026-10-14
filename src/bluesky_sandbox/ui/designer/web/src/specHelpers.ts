@@ -248,9 +248,9 @@ export const defaultQueryRegion = (lat = 52.0, lon = 4.75, altitude?: SpecDict |
 
 // A waypoint's own settings; where it is, is its point bounds (see
 // waypointPoints.addWaypointAt).
-export const defaultWaypoint = (altFt = 3000): SpecDict => ({
+// A waypoint is a place: how a route crosses it is the route step's.
+export const defaultWaypoint = (): SpecDict => ({
   type: "waypoint",
-  ...(Number.isFinite(altFt) ? { alt_ft: altFt } : {}),
   reach_radius_nm: 1,
   color: "cyan",
   render_shape: true,
@@ -549,6 +549,52 @@ export const gcOrphanShapes = (spec: SpecDict, before: SpecDict): void => {
   for (const name of Object.keys(regions)) {
     if (isUnused(now[name]) && !now[name].group && then[name] && !isUnused(then[name])) delete regions[name];
   }
+};
+
+// A choice's branches as lists of steps, however deep: a branch may be written
+// as one step - the routes read it as a list of it - and the Route tab edits
+// branches as lists. The same steps back when there was nothing to change.
+const withListBranches = (steps: any): any => {
+  if (!Array.isArray(steps)) return steps;
+  let changed = false;
+  const out = steps.map((s: any) => {
+    if (!s || typeof s !== "object" || !Array.isArray(s.choice)) return s;
+    const branches = s.choice.map((b: any) => {
+      const list = Array.isArray(b) ? b : [b];
+      const inner = withListBranches(list);
+      if (inner !== b) changed = true;
+      return inner;
+    });
+    return { ...s, choice: branches };
+  });
+  return changed ? out : steps;
+};
+
+// A spec's routes - global, named, each spawn region's - with list branches
+// (see withListBranches). The same spec back when there was nothing to change.
+export const migrateListBranches = (spec: SpecDict | null): SpecDict | null => {
+  const spawn = spec?.spawn;
+  if (!spawn || typeof spawn !== "object") return spec;
+  let changed = false;
+  const fix = (steps: any) => {
+    const next = withListBranches(steps);
+    if (next !== steps) changed = true;
+    return next;
+  };
+  const routes = Object.fromEntries(
+    Object.entries(spawn.routes ?? {}).map(([k, r]: [string, any]) => [
+      k,
+      Array.isArray(r) ? fix(r) : r && Array.isArray(r.steps) ? (() => { const s = fix(r.steps); return s === r.steps ? r : { ...r, steps: s }; })() : r,
+    ]),
+  );
+  const route = fix(spawn.route);
+  const regions = (spawn.regions ?? []).map((r: any) => {
+    if (!r || typeof r !== "object") return r;
+    const next = fix(r.route);
+    return next === r.route ? r : { ...r, route: next };
+  });
+  if (!changed) return spec;
+  return { ...spec, spawn: { ...spawn, route, routes, regions } };
 };
 
 // Geometry lives only in named regions. Promote any inline bounds (airspace,

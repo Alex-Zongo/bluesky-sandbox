@@ -234,8 +234,8 @@ def test_a_lowercase_prefix_still_gets_its_route():
     # silently ignored every route command addressed to it.
     route_scenario = _Scenario()
     route_scenario.spawn.regions[0].callsign_prefixes = ["kl"]
-    route_scenario.spawn.regions[0].route = ["merge"]
-    queryables = {"merge": Waypoint(lat=52.0, lon=4.6, alt_ft=9_000)}
+    route_scenario.spawn.regions[0].route = [{"waypoint": "merge", "alt_ft": 9_000}]
+    queryables = {"merge": Waypoint(lat=52.0, lon=4.6)}
     route_scenario.support = lambda: EpisodeSpec(
         airspace_bounds=None,
         spawn=route_scenario.spawn,

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import bluesky as bs
 import numpy as np
 from bluesky.tools.aero import ft, kts
-from bluesky.tools.geo import qdrdist
 
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 
@@ -43,13 +42,13 @@ class TsasDataMixin:
             return []
         tables: list[TsasTable] = []
         for name, waypoint in self.tsas_waypoints(driver):
-            rows = self.tsas_aircraft_rows(waypoint, driver)
+            rows = self.tsas_aircraft_rows(name, waypoint, driver)
             if max_rows is not None:
                 rows = rows[:max_rows]
             tables.append(
                 TsasTable(
                     name=name,
-                    title=self.tsas_title(name, waypoint),
+                    title=name,
                     color=waypoint.color,
                     waypoint=waypoint,
                     rows=rows,
@@ -67,7 +66,7 @@ class TsasDataMixin:
             if isinstance(queryable, Waypoint) and self.tsas_show_waypoint(queryable)
         ]
 
-    def tsas_aircraft_rows(self, waypoint: Waypoint, driver) -> list[TsasRow]:
+    def tsas_aircraft_rows(self, name: str, waypoint: Waypoint, driver) -> list[TsasRow]:
         n = bs.traf.ntraf
         if n == 0:
             return []
@@ -79,21 +78,19 @@ class TsasDataMixin:
         lat = np.asarray(bs.traf.lat[:n], dtype=float)
         lon = np.asarray(bs.traf.lon[:n], dtype=float)
         alt_ft = np.asarray(bs.traf.alt[:n], dtype=float) / ft
-        # A row needs the distance and bearing to the waypoint - not the rest
-        # of its current state (speed regimes and all) - so all aircraft at
-        # once, from the same target and formulas as that state.
-        target = waypoint.target
-        bearing_deg, dist_nm = qdrdist(lat, lon, target.lat, target.lon)
-        dist_nm = np.asarray(dist_nm, dtype=float)
+        # A row needs the distance and bearing to each aircraft's fix there and
+        # its height against that fix's crossing - the waypoint's batched query,
+        # as the observations read it.
+        batch = driver._env.query_batch(name, range(n))
+        bearing_deg = batch.values("current.bearing_deg")
+        dist_nm = np.asarray(batch.values("current.distance_nm"), dtype=float)
         gs_kts = np.asarray(bs.traf.gs[:n], dtype=float) / kts
         angle_deg = (bearing_deg - np.asarray(bs.traf.hdg[:n], dtype=float) + 540) % 360 - 180
         closing_kts = gs_kts * np.cos(np.radians(angle_deg))
         closing = closing_kts > self._MIN_CLOSING_KT
         eta_s = np.full(n, math.inf)
         eta_s[closing] = dist_nm[closing] / closing_kts[closing] * 3600.0
-        alt_diff_ft = (
-            np.full(n, math.nan) if target.alt_ft is None else alt_ft - target.alt_ft
-        )
+        alt_diff_ft = np.asarray(batch.values("current.alt_diff_ft"), dtype=float)
 
         rows: list[TsasRow] = []
         for idx, (eta, dist, alt_diff) in enumerate(
@@ -116,12 +113,6 @@ class TsasDataMixin:
             )
         rows.sort(key=lambda row: (row.eta_s, row.dist_nm))
         return rows
-
-    @staticmethod
-    def tsas_title(name: str, waypoint: Waypoint) -> str:
-        if waypoint.alt_ft is None:
-            return name
-        return f"{name}  FL{int(round(waypoint.alt_ft / 100)):03d}"
 
     @staticmethod
     def tsas_show_waypoint(waypoint: Waypoint) -> bool:

@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 from bluesky.tools.geo import qdrpos
 
+from bluesky_sandbox.sim.spawn import waypoint_steps
 from bluesky_sandbox.sim.bounds import Bounds
 from bluesky_sandbox.sim.queryables import QueryRegion, Waypoint
 from bluesky_sandbox.sim.scenario.geometry_json import (
@@ -90,19 +91,6 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
         )
         for name, q in episode.queryables.items()
     ]
-    # A sampled waypoint whose altitude resolves per aircraft (envelope) has no
-    # single alt_ft - which would strand its marker at ground level, invisible.
-    # Give the map a representative display altitude: the midpoint of its
-    # sample region's altitude band (the band the per-aircraft draws land in).
-    for entry in queryables:
-        if entry.get("kind") != "waypoint" or entry.get("alt_ft") is not None:
-            continue
-        region = scenario.sampled_waypoints.get(entry["name"])
-        lo = getattr(region, "alt_min_ft", None)
-        hi = getattr(region, "alt_max_ft", None)
-        if lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi):
-            entry["display_alt_ft"] = float(lo + hi) / 2.0
-
     spawn_regions = [
         spawn_region_geometry(i, region) for i, region in enumerate(episode.spawn.regions)
     ]
@@ -122,22 +110,15 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
         if wp is None:
             return None
         sample_bounds = step.get("sample")
+        alt = step.get("alt_ft")
         if sample_bounds is not None:
             lat, lon = sample_bounds.sample_point(rng)
-            alt = step.get("alt_ft", getattr(wp, "alt_ft", None))
-            band = getattr(sample_bounds, "alt_band_at", None)
-            if band is not None and alt is not None:
-                lo, hi = band(lat, lon)
-                if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-                    alt = float(rng.uniform(lo, hi))
         else:
             lat, lon = getattr(wp, "lat", None), getattr(wp, "lon", None)
-            alt = step.get("alt_ft", getattr(wp, "alt_ft", None))
         if lat is None or lon is None:
             return None
-        # Presentation fields from the waypoint template so the map can draw
-        # the per-aircraft target as a real waypoint (reach-radius tolerance
-        # disc in its color), not just a screen-space dot.
+        # Drawn as a real waypoint - its reach disc in its color - crossed as
+        # this aircraft's route crosses it, not just a screen-space dot.
         return {
             "lat": float(lat),
             "lon": float(lon),
@@ -145,8 +126,12 @@ def scenario_preview(spec: DesignSpec, *, seed: int = 0) -> dict[str, Any]:
             "name": name,
             "color": getattr(wp, "color", None),
             "reach_radius_nm": getattr(wp, "reach_radius_nm", None),
-            "alt_tolerance_ft": getattr(wp, "alt_tolerance_ft", None),
-            "speed_tolerance_kts": getattr(wp, "speed_tolerance_kts", None),
+            **{
+                key: float(step[key])
+                for key in ("speed_kts", "alt_below_ft", "alt_above_ft", "speed_below_kts", "speed_above_kts")
+                if isinstance(step.get(key), (int, float)) and not isinstance(step.get(key), bool)
+            },
+            "flyover": bool(step.get("flyover", False)),
         }
 
     # The episode's plan, as the environment makes it at reset: the regions'
@@ -293,21 +278,29 @@ def airspace_warnings(episode) -> list[str]:
             )
         return points
 
-    def waypoint_alt_samples(q: Waypoint) -> tuple[float, ...]:
-        if not finite(q.alt_ft):
-            return ()
-        alt = float(q.alt_ft)
-        tol = q.alt_tolerance_ft
-        if finite(tol) and float(tol) > 0.0:
-            return alt - float(tol), alt, alt + float(tol)
-        return (alt,)
+    steps_at = waypoint_steps(episode.spawn)
+
+    def waypoint_alt_samples(name: str) -> tuple[float, ...]:
+        """The altitudes routes cross ``name`` at, and their windows' ends."""
+        out_alts: set[float] = set()
+        for step in steps_at.get(name, []):
+            alt, below, above = (step.get(k) for k in ("alt_ft", "alt_below_ft", "alt_above_ft"))
+            if not (isinstance(alt, (int, float)) and finite(alt)):
+                continue
+            alt = float(alt)
+            out_alts |= {alt}
+            if isinstance(below, (int, float)) and finite(below):
+                out_alts.add(alt - float(below))
+            if isinstance(above, (int, float)) and finite(above):
+                out_alts.add(alt + float(above))
+        return tuple(sorted(out_alts))
 
     for name, q in episode.queryables.items():
         if isinstance(q, QueryRegion):
             if bounds_outside(q.shape):
                 out.append(f"queryable '{name}'")
         elif isinstance(q, Waypoint):
-            alt_samples = waypoint_alt_samples(q)
+            alt_samples = waypoint_alt_samples(name)
             if any(point_outside(lat, lon, alt_samples) for lat, lon in waypoint_points(q)):
                 out.append(f"waypoint '{name}'")
     for i, region in enumerate(episode.spawn.regions):
