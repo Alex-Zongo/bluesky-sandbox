@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 import numpy as np
 
@@ -25,6 +25,19 @@ from bluesky_sandbox.interface.task import (
     WaypointReadoutItem,
 )
 from bluesky_sandbox.sim.scenario import EpisodeSpec, Scenario
+
+
+class EnvOptions(TypedDict, total=False):
+    """How an env is shown and paced: what every :class:`BlueskyEnv` takes as
+    keywords beside its config and scenario, typed for a task env to pass on
+    with ``**options: Unpack[EnvOptions]``. Each is as
+    :class:`~bluesky_sandbox.core.base_environment.BlueskyBaseEnvironment`
+    describes it."""
+
+    render_mode: RenderMode
+    realtime: bool
+    views: ViewSpec | None
+    frame_driver: str | None
 
 # The runtime's public API, inherited from ``BlueskyBaseEnvironment``. These are
 # not task hooks: the environment calls them on itself, and because the two
@@ -92,19 +105,9 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         *,
         scenario: Scenario,
         config: EnvConfig,
-        render_mode: RenderMode = None,
-        realtime: bool = False,
-        views: ViewSpec | None = None,
-        frame_driver: str | None = None,
+        **options: Unpack[EnvOptions],
     ) -> None:
-        super().__init__(
-            config=config,
-            scenario=scenario,
-            render_mode=render_mode,
-            realtime=realtime,
-            views=views,
-            frame_driver=frame_driver,
-        )
+        super().__init__(config=config, scenario=scenario, **options)
         task_info_providers = list(self.define_task_info_providers())
         if any(not callable(provider) for provider in task_info_providers):
             raise ValueError("define_task_info_providers() must return callables.")

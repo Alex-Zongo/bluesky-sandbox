@@ -18,6 +18,7 @@ import ast
 
 import pytest
 
+import dataclasses
 import importlib
 import itertools
 import math
@@ -1271,7 +1272,7 @@ def test_codegen_generates_importable_package():
     assert "MinMaxNormalizer()" in config_py and "SymmetricNormalizer(clipped=True)" in config_py
     assert "allowed_aircraft = tuple(ALLOWED_AIRCRAFT)" not in env_py
     assert "make_config" not in env_py and "make_env" not in env_py
-    assert "config=CONFIG" in env_py
+    assert "config: EnvConfig = CONFIG" in env_py and "**options: Unpack[EnvOptions]" in env_py
 
     # write it out, import it, and verify it builds a scenario + env config
     with tempfile.TemporaryDirectory() as tmp:
@@ -1286,6 +1287,10 @@ def test_codegen_generates_importable_package():
             assert len(cfg.task_info_providers) == 0
             env = mod.Env(render_mode=None)
             assert len(env.config.task_info_providers) == 1
+            env.close()
+            # The env takes another config, and any env option, directly.
+            env = mod.Env(config=dataclasses.replace(cfg, dt=7.0), realtime=False)
+            assert env.config.dt == 7.0 and cfg.dt != 7.0
             env.close()
         finally:
             sys.path.remove(tmp)
@@ -1681,7 +1686,7 @@ def test_an_unknown_template_is_refused():
 
 def test_an_sb3_package_trains_with_ppo_and_flags_what_sb3_cannot_do():
     plain = _templated("sb3")["train.py"]
-    assert "MaskedPPO(" in plain and "sb3_vec_env(make_env, n_processes)" in plain
+    assert "MaskedPPO(" in plain and "sb3_vec_env(build, n_processes)" in plain
     # Trained only on the slots that hold an agent, not SB3's PPO on all of them.
     assert "from .masked_ppo import MaskedPPO" in plain
     assert "from stable_baselines3 import PPO" not in plain
@@ -1779,7 +1784,7 @@ def test_an_rl_package_in_processes_steps_a_vector_env():
     many = _run_as("rl", 3)
     ast.parse(many)
     assert "n_processes: int = 3" in many
-    assert "vec = vec_env(make_env, n_processes)" in many
+    assert "vec = vec_env(functools.partial(make_env, **(env_kwargs or {})), n_processes)" in many
     assert "critic_observation_space(vec.observation_space)" in many
     # The workers are closed whatever happens once they run.
     body = many.split("vec = vec_env(", 1)[1]
@@ -1824,7 +1829,7 @@ def test_the_rl_evaluation_calls_a_batched_policy_on_a_batch_of_one():
 
 def test_an_sb3_package_runs_in_the_processes_asked_for():
     sb3 = _run_as("sb3", 4)
-    assert "n_processes: int = 4" in sb3 and "sb3_vec_env(make_env, n_processes)" in sb3
+    assert "n_processes: int = 4" in sb3 and "sb3_vec_env(build, n_processes)" in sb3
     assert "finally:\n        vec.close()" in sb3
 
 
@@ -1847,7 +1852,7 @@ def test_an_sb3_package_carries_its_wrappers_and_network_as_its_own_source():
     assert own["networks.py"] == Path(networks.__file__).read_text()
     assert own["masked_ppo.py"] == Path(masked_ppo.__file__).read_text()
     assert "ppo_lagrangian.py" not in own  # no cost, no constraint
-    assert "    vec = AgentEpisodes(sb3_vec_env(make_env, n_processes))" in own["train.py"]
+    assert "    vec = AgentEpisodes(sb3_vec_env(build, n_processes))" in own["train.py"]
     # No intruders, no network.
     spec.env.intruder_obs_fields = []
     alone = {p.rsplit("/", 1)[1] for p in codegen.generate_task(spec, "Sb3")}

@@ -11,7 +11,7 @@ from bluesky_sandbox.core.layout import (
     observation_layout,
     zero_action,
 )
-from bluesky_sandbox.env import BlueskyEnv
+from bluesky_sandbox.env import BlueskyEnv, EnvOptions
 from bluesky_sandbox.integrations.asymmetric import (
     actor_obs,
     actor_observation_layout,
@@ -141,6 +141,7 @@ __all__ = [
     "BaseAgentInfo",
     "BaseObs",
     "BlueskyEnv",
+    "EnvOptions",
     "BooleanFootprint",
     "Bounds",
     "BoxFootprint",

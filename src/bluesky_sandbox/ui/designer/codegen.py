@@ -164,7 +164,7 @@ def generate_task(spec: DesignSpec, package_name: str) -> dict[str, str]:
             processes=processes,
         )
         files[f"{pkg}/evaluate.py"] = sb3_evaluate_py(
-            pkg, eval_render_mode(spec.metadata), constrained=defines_cost(e)
+            pkg, class_stem, eval_render_mode(spec.metadata), constrained=defines_cost(e)
         )
         # How the env is fitted to SB3, the policy's network and the algorithm
         # that trains it: the package's own to read and change.
@@ -769,9 +769,9 @@ class ActorView(BaseParallelWrapper):
     else:
         wrapped = "    return wrap_parallel_env(env, max_agents=max_agents)"
     head_imports = (
-        f"{gym_import}{view_imports}from stable_baselines3.common.callbacks import CheckpointCallback\n"
+        "import functools\nfrom typing import Unpack\n\n"
+        f"{gym_import}{view_imports}from stable_baselines3.common.callbacks import CheckpointCallback\n\n"
     )
-    head_imports += "\n" if head_imports else ""
     return f'''"""Train this task with Stable-Baselines3: one PPO policy shared by every
 agent, the multi-agent env made a vector env by SuperSuit.
 
@@ -788,13 +788,14 @@ from __future__ import annotations
 
 {head_imports}from bluesky_sandbox.integrations import sb3_vec_env, wrap_parallel_env
 
-from .env import {class_stem}Env
+from .env import {class_stem}Env, {class_stem}EnvKwargs
 {package_imports}{actor_view}
 
-def make_env(render_mode=None):
+def make_env(**env_kwargs: Unpack[{class_stem}EnvKwargs]):
     """The env as SB3 needs it: a fixed pool of agent IDs, intruders padded to
-    a fixed shape."""
-    env = {class_stem}Env(render_mode=render_mode){wrap_view}
+    a fixed shape. ``env_kwargs`` go to :class:`{class_stem}Env` - its config,
+    render mode, views..."""
+    env = {class_stem}Env(**env_kwargs){wrap_view}
     max_agents = env.unwrapped.scenario.support().max_aircraft
 {wrapped}
 
@@ -805,6 +806,7 @@ def train(
     batch_size: int | None = None,
     tensorboard_log: str | None = "runs",
     save_every: int | None = 100_000,
+    env_kwargs: {class_stem}EnvKwargs | None = None,
 ) -> {algo}:
     """Train, the episodes run in ``n_processes`` processes at once - BlueSky
     is one simulator per process - every agent of each an entry of SB3's
@@ -814,9 +816,12 @@ def train(
 
     The model is saved as ``ppo_{pkg}`` when training ends - or is stopped
     with Ctrl+C - and every ``save_every`` agent steps in ``checkpoints/``
-    (``None``: only at the end)."""{guard}
-    # Each agent's episode reward and length, for SB3 to log.
-    vec = AgentEpisodes(sb3_vec_env(make_env, n_processes))
+    (``None``: only at the end). ``env_kwargs`` build each copy of the env,
+    as :func:`make_env` takes them: ``{{"config": ...}}`` to train it otherwise."""{guard}
+    # Each agent's episode reward and length, for SB3 to log. Each worker
+    # builds its own copy, with these keywords.
+    build = functools.partial(make_env, **(env_kwargs or {{}}))
+    vec = AgentEpisodes(sb3_vec_env(build, n_processes))
     # From here on the worker processes are running: close them whatever
     # happens, or this process cannot exit.
     try:
@@ -998,7 +1003,9 @@ hooks. Run ``python -m {pkg}.train`` once the stubs are filled in, and
 
 from __future__ import annotations
 
-{imports}from .env import {class_stem}Env
+from typing import Unpack
+
+{imports}from .env import {class_stem}Env, {class_stem}EnvKwargs
 
 
 def build_policy(observation_space):
@@ -1026,8 +1033,11 @@ def update({update_args}):
     raise NotImplementedError("update: fit the networks on the collected rollout.")
 
 
-def training_loop(steps: int = 200, seed: int = 0) -> None:
-    env = {class_stem}Env()
+def training_loop(
+    steps: int = 200, seed: int = 0, **env_kwargs: Unpack[{class_stem}EnvKwargs]
+) -> None:
+    """``env_kwargs`` build the env: its config, render mode, views..."""
+    env = {class_stem}Env(**env_kwargs)
 {loop}
 
 if __name__ == "__main__":
@@ -1100,17 +1110,22 @@ are filled in (``pip install bluesky-sandbox[parallel]``), and
 
 from __future__ import annotations
 
+import functools
+from typing import Unpack
+
 import numpy as np
 
 {view_imports}from bluesky_sandbox.integrations import vec_env, wrap_parallel_env
 
-from .env import {class_stem}Env
+from .env import {class_stem}Env, {class_stem}EnvKwargs
 
 
-def make_env(render_mode=None):
+def make_env(**env_kwargs: Unpack[{class_stem}EnvKwargs]):
     """One copy, as the vector env takes it: a fixed pool of agent IDs, its
-    intruders padded to a fixed shape. Each worker process builds its own."""
-    env = {class_stem}Env(render_mode=render_mode)
+    intruders padded to a fixed shape. Each worker process builds its own.
+    ``env_kwargs`` go to :class:`{class_stem}Env` - its config, render mode,
+    views..."""
+    env = {class_stem}Env(**env_kwargs)
     max_agents = env.unwrapped.scenario.support().max_aircraft
     return wrap_parallel_env(env, max_agents=max_agents)
 
@@ -1143,9 +1158,13 @@ def update({update_args}):
 
 
 def training_loop(
-    steps: int = 200, seed: int = 0, n_processes: int = {processes}
+    steps: int = 200,
+    seed: int = 0,
+    n_processes: int = {processes},
+    env_kwargs: {class_stem}EnvKwargs | None = None,
 ) -> None:
-    vec = vec_env(make_env, n_processes)
+    """``env_kwargs`` build each copy of the env, as :func:`make_env` takes them."""
+    vec = vec_env(functools.partial(make_env, **(env_kwargs or {{}})), n_processes)
     # From here on the worker processes are running: close them whatever
     # happens, or this process cannot exit.
     try:
@@ -1245,7 +1264,10 @@ def _env_py(
     )
     base_imports = f"""from __future__ import annotations
 
-from bluesky_sandbox.env import BlueskyEnv
+from typing import Unpack
+
+from bluesky_sandbox.config import EnvConfig
+from bluesky_sandbox.env import BlueskyEnv, EnvOptions
 
 from .config import CONFIG
 from .scenario import {class_stem}Scenario"""
@@ -1265,27 +1287,30 @@ from .scenario import {class_stem}Scenario"""
     cost_print = ", total cost {total_cost:.3f}" if has_cost else ""
     body = f'''
 
+class {class_stem}EnvKwargs(EnvOptions, total=False):
+    """What :class:`{class_stem}Env` takes, as keywords - to pass on, typed,
+    with ``**env_kwargs: Unpack[{class_stem}EnvKwargs]``."""
+
+    config: EnvConfig
+    scenario: {class_stem}Scenario
+
+
 class {class_stem}Env(BlueskyEnv):
-    """Generated environment class with task behavior in Python code."""
+    """Generated environment class with task behavior in Python code.
+
+    ``config`` defaults to this task's (``CONFIG``) - pass a changed copy,
+    ``dataclasses.replace(CONFIG, dt=5.0)``, to run it otherwise; ``options``
+    are how it is shown and paced (``render_mode``, ``views``, ...)."""
 
     def __init__(
         self,
         *,
+        config: EnvConfig = CONFIG,
         scenario: {class_stem}Scenario | None = None,
-        render_mode=None,
-        realtime: bool = False,
-        views=None,
-        frame_driver=None,
+        **options: Unpack[EnvOptions],
     ) -> None:
         scenario = {class_stem}Scenario() if scenario is None else scenario
-        super().__init__(
-            config=CONFIG,
-            scenario=scenario,
-            render_mode=render_mode,
-            realtime=realtime,
-            views=views,
-            frame_driver=frame_driver,
-        )
+        super().__init__(config=config, scenario=scenario, **options)
 
     def define_task_info_providers(self):
         return {providers}

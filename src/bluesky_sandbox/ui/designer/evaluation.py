@@ -72,7 +72,9 @@ _EPISODES = """    returns = []
 """
 
 
-def sb3_evaluate_py(pkg: str, render_mode: str | None, *, constrained: bool = False) -> str:
+def sb3_evaluate_py(
+    pkg: str, class_stem: str, render_mode: str | None, *, constrained: bool = False
+) -> str:
     """``evaluate.py`` for the SB3 package: the saved PPO policy, flown -
     PPO-Lagrangian's, when the design is ``constrained`` by a cost."""
     algo = "PPOLagrangian" if constrained else "MaskedPPO"
@@ -86,8 +88,11 @@ def sb3_evaluate_py(pkg: str, render_mode: str | None, *, constrained: bool = Fa
 
 from __future__ import annotations
 
+from typing import Unpack
+
 import numpy as np
 {algo_import}
+from .env import {class_stem}EnvKwargs
 from .train import make_env
 
 {_render_mode_block(render_mode)}
@@ -98,12 +103,13 @@ def evaluate(
     seed: int = 0,
     render_mode: str | None = RENDER_MODE,
     max_steps: int | None = None,
+    **env_kwargs: Unpack[{class_stem}EnvKwargs],
 ) -> list[float]:
     """Fly ``episodes`` episodes, every agent acting as the policy would
     deterministically - each to its end, or ``max_steps`` steps; return each
-    one's total reward."""
+    one's total reward. ``env_kwargs`` go to the env: its config, views..."""
     model = {algo}.load(model_path)
-    env = make_env(render_mode=render_mode)
+    env = make_env(render_mode=render_mode, **env_kwargs)
 {_EPISODES.format(act="model.predict(ob, deterministic=True)[0]")}
 
 if __name__ == "__main__":
@@ -144,9 +150,11 @@ in.
 
 from __future__ import annotations
 
+from typing import Unpack
+
 import numpy as np
 
-{view_import}from .env import {class_stem}Env
+{view_import}from .env import {class_stem}Env, {class_stem}EnvKwargs
 
 {_render_mode_block(render_mode)}
 
@@ -160,11 +168,13 @@ def evaluate(
     seed: int = 0,
     render_mode: str | None = RENDER_MODE,
     max_steps: int | None = None,
+    **env_kwargs: Unpack[{class_stem}EnvKwargs],
 ) -> list[float]:
     """Fly ``episodes`` episodes with your actor - each to its end, or
-    ``max_steps`` steps; return each one's total reward."""
+    ``max_steps`` steps; return each one's total reward. ``env_kwargs`` go to
+    the env: its config, views..."""
     policy = load_policy()
-    env = {class_stem}Env(render_mode=render_mode)
+    env = {class_stem}Env(render_mode=render_mode, **env_kwargs)
 {_EPISODES.format(act=act)}
 
 if __name__ == "__main__":
