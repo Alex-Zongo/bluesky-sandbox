@@ -89,9 +89,12 @@ function isEditableElement(el: EventTarget | null): boolean {
 export default function MapTab({
   spec,
   onSpecChange,
+  onOpenCode,
 }: {
   spec: SpecDict | null;
   onSpecChange: (next: SpecDict) => void;
+  // Open a code block in the Code tab, by its key there.
+  onOpenCode?: (key: string) => void;
 }) {
   // Design-panel width. Persisted per browser so a width you chose survives a
   // reload; clamped on read as well as on drag, because a stored value from a
@@ -963,6 +966,7 @@ export default function MapTab({
           onHighlightRoute={setHighlight}
           selectedKey={selectedTarget ? targetKey(selectedTarget) : null}
           onSelect={selectTarget}
+          onOpenCode={onOpenCode}
         />
       )}
     </div>

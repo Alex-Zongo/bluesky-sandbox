@@ -19,6 +19,7 @@ export default function DesignPanel({
   onHighlightRoute,
   selectedKey,
   onSelect,
+  onOpenCode,
   width,
 }: {
   spec: SpecDict;
@@ -32,6 +33,7 @@ export default function DesignPanel({
   onHighlightRoute: (name: string | null) => void;
   selectedKey?: string | null;
   onSelect?: (target: EditTarget | null) => void;
+  onOpenCode?: (key: string) => void;
   width?: number;
 }) {
   return (
@@ -48,6 +50,7 @@ export default function DesignPanel({
         onHighlightRoute={onHighlightRoute}
         selectedKey={selectedKey}
         onSelect={onSelect ?? (() => {})}
+        onOpenCode={onOpenCode}
       />
     </div>
   );

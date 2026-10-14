@@ -47,6 +47,7 @@ export default function CodeTab({
   onSpecTextChange,
   validation,
   onShowSpaces,
+  open,
 }: {
   spec: SpecDict | null;
   specText: string;
@@ -54,6 +55,9 @@ export default function CodeTab({
   onSpecTextChange: (text: string) => void;
   validation: ValidateResult | null;
   onShowSpaces: () => void;
+  // A block another tab asked to open ("spawnsource:<name>"): a new object
+  // each time, so asking again opens it again.
+  open?: { key: string } | null;
 }) {
   const { theme } = useTheme();
   const [generated, setGenerated] = useState<Record<string, string>>({});
@@ -62,6 +66,9 @@ export default function CodeTab({
   const [sideW, setSideW, resetSideW] = useStoredSize("designer.code.sideWidth", 300, 220, () => window.innerWidth * 0.45);
   const [pkg, setPkg] = useState<string>("");
   const [selected, setSelected] = useState<string>("design.py");
+  useEffect(() => {
+    if (open) setSelected(open.key);
+  }, [open]);
   const [genError, setGenError] = useState<string | null>(null);
   // The per-agent hook a batched one just replaced, and its code, until it is
   // restored or dismissed.

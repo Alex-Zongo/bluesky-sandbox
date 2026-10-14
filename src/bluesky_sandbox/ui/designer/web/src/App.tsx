@@ -87,6 +87,12 @@ export default function App() {
   // What the designer is waiting on, if anything (busy.ts).
   const busy = useBusy();
   const [tab, setTab] = useState<Tab>("map");
+  // A code block another tab asked the Code tab to open.
+  const [codeOpen, setCodeOpen] = useState<{ key: string } | null>(null);
+  const openCode = (key: string) => {
+    setCodeOpen({ key });
+    setTab("code");
+  };
   const [specText, setSpecText] = useState<string>(() => JSON.stringify(normalizeSpec(DEFAULT_SPEC), null, 2));
   const [validation, setValidation] = useState<ValidateResult | null>(null);
   const [saveName, setSaveName] = useState("untitled");
@@ -521,7 +527,7 @@ export default function App() {
         tabIndex={-1}
       >
         {tab === "map" ? (
-          <MapTab spec={spec} onSpecChange={updateSpec} />
+          <MapTab spec={spec} onSpecChange={updateSpec} onOpenCode={openCode} />
         ) : tab === "route" ? (
           <RouteTab spec={spec} onSpecChange={updateSpec} />
         ) : tab === "metadata" ? (
@@ -542,6 +548,7 @@ export default function App() {
             onSpecTextChange={setSpecText}
             validation={validation}
             onShowSpaces={() => setTab("spaces")}
+            open={codeOpen}
           />
         )}
       </main>

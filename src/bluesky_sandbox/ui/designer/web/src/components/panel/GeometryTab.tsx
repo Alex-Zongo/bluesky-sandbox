@@ -82,6 +82,7 @@ export default function GeometryTab({
   onHighlightRoute,
   selectedKey,
   onSelect,
+  onOpenCode,
 }: {
   spec: SpecDict;
   onChange: (next: SpecDict) => void;
@@ -94,6 +95,8 @@ export default function GeometryTab({
   onHighlightRoute: (name: string | null) => void;
   selectedKey?: string | null;
   onSelect: (target: EditTarget | null) => void;
+  // Open a code block in the Code tab, by its key there ("spawnsource:<name>").
+  onOpenCode?: (key: string) => void;
 }) {
   const [filter, setFilter] = useState("");
   const [showAllShapes, setShowAllShapes] = useState(false);
@@ -241,6 +244,9 @@ export default function GeometryTab({
   };
 
   const spawnRegions: SpecDict[] = spec.spawn?.regions ?? [];
+  // Spawn sources plan their aircraft in code: listed with the regions, each
+  // opening its plan.
+  const spawnSources: SpecDict[] = spec.spawn?.sources ?? [];
   const routeNames = Object.keys(spec.spawn?.routes ?? {});
 
   // ---- groups ---------------------------------------------------------------
@@ -681,7 +687,21 @@ export default function GeometryTab({
                 onToggleLocked={() => onToggleLocked(`spawn:${i}`)}
               />
             ))}
-          {spawnRegions.length === 0 && <div className="muted small">no spawn regions</div>}
+          {spawnSources
+            .filter((s) => has(s.name ?? ""))
+            .map((s) => (
+              <Row
+                key={`source:${s.name}`}
+                name={s.name}
+                kind="source"
+                note="plans in code"
+                selected={false}
+                onClick={() => onOpenCode?.(`spawnsource:${s.name}`)}
+              />
+            ))}
+          {spawnRegions.length === 0 && spawnSources.length === 0 && (
+            <div className="muted small">no spawn regions or sources</div>
+          )}
         </GeoGroup>
 
         <GeoGroup
