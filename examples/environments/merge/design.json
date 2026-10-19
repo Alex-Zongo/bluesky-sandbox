@@ -1,0 +1,493 @@
+{
+  "version": 1,
+  "nav_cycle": null,
+  "metadata": {
+    "name": "merge",
+    "note": "Two arrival streams at FL200, 280 KT, on a synthetic STAR: entry fixes W1 and E1 40 NM out, 90\u00b0 apart, merge at MERGE, a 25 NM trunk to IAF. 2\u20134 aircraft per branch, 90\u2013150 s in trail, the branches offset at random so arrivals at MERGE interleave. Done at IAF."
+  },
+  "airspace": {
+    "ref": "airspace"
+  },
+  "queryables": {
+    "exit": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": false,
+      "render_label": false,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "exit"
+      }
+    },
+    "MERGE": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "MERGE"
+      }
+    },
+    "W1": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "W1"
+      }
+    },
+    "E1": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "E1"
+      }
+    },
+    "IAF": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "IAF"
+      }
+    },
+    "MERGE_REGION": {
+      "type": "query_region",
+      "shape": {
+        "ref": "MERGE_REGION"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    }
+  },
+  "shapes": {
+    "airspace": {
+      "type": "region",
+      "footprint": {
+        "type": "disk",
+        "center": {
+          "lat_deg": 56,
+          "lon_deg": 2
+        },
+        "radius_nm": 60,
+        "n_vertices": 72
+      },
+      "altitude": null
+    },
+    "exit": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 56,
+          "lon_deg": 2
+        }
+      }
+    },
+    "MERGE": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 56,
+          "lon_deg": 2
+        }
+      }
+    },
+    "W1": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 56.4687,
+          "lon_deg": 1.1462
+        }
+      }
+    },
+    "E1": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 56.4687,
+          "lon_deg": 2.8538
+        }
+      }
+    },
+    "IAF": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 55.5831,
+          "lon_deg": 2
+        }
+      }
+    },
+    "MERGE_REGION": {
+      "type": "region",
+      "footprint": {
+        "type": "box",
+        "lat_min_deg": 55.4971322835021,
+        "lat_max_deg": 56.10088203413953,
+        "lon_min_deg": 1.789618424743665,
+        "lon_max_deg": 2.218314535095246
+      },
+      "altitude": null
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "route": null,
+    "routes": {
+      "STAR_W": [
+        "W1",
+        "MERGE",
+        "IAF"
+      ],
+      "STAR_E": [
+        "E1",
+        "MERGE",
+        "IAF"
+      ]
+    },
+    "regions": [],
+    "sources": [
+      {
+        "name": "star",
+        "when_blocked": "defer",
+        "max_aircraft": 10,
+        "plan": "# This episode's aircraft, each a SpawnRequest with its time: read any data\n# (scenario setup can load a file once), draw from any distribution.\n# ctx: the episode's shapes, queryables, airspace and spawn config.\n\nmerge = ctx.shapes[\"MERGE\"].center\nout = []\n\nfor route, entry in ROUTES.items():\n    fix = ctx.shapes[entry].center\n    hdg, _ = kwikqdrdist(fix.lat_deg, fix.lon_deg, merge.lat_deg, merge.lon_deg)  # inbound track\n    at = _point(fix, hdg + 180.0, SPAWN_BEFORE_NM)      # on the inbound line, before the fix\n    t = rng.uniform(0.0, 120.0)                           # this branch's first spawn\n    for k in range(int(rng.integers(PER_BRANCH[0], PER_BRANCH[1] + 1))):\n        out.append(SpawnRequest(at=at, alt_ft=ALT_FT, spd_kts=CAS_KTS, hdg_deg=hdg, actype=AC_TYPE,\n                                callsign=f\"{route[-1]}{k + 1:02d}\", route=route, time_s=t))\n        t += rng.uniform(*IN_TRAIL_S)\nreturn out\n"
+      }
+    ]
+  },
+  "transform": null,
+  "env": {
+    "obs_fields": [
+      {
+        "field": "ActiveRouteWaypointDistanceNm",
+        "kwargs": {
+          "low": 0,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointTrackErrorDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "kwargs": {
+          "low": 15000,
+          "high": 25000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "CasKts",
+        "kwargs": {
+          "low": 200,
+          "high": 350,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "VsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "TrkDeg",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "GsKts",
+        "kwargs": {
+          "low": 250,
+          "high": 550,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ApCasKts",
+        "kwargs": {
+          "low": 200,
+          "high": 350,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "PerfVminKts",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "PerfVmaxKts",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "RelPosAlongTrackNm",
+        "kwargs": {
+          "low": -60,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelPosCrossTrackNm",
+        "kwargs": {
+          "low": -60,
+          "high": 60,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -2000,
+          "high": 2000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVelAlongTrackKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVelCrossTrackKts",
+        "kwargs": {
+          "low": -600,
+          "high": 600,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "RelVsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "low": 0,
+          "high": 90,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictTcpaS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictTlosS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "InConf"
+      },
+      {
+        "field": "InLosNow"
+      }
+    ],
+    "critic_obs_fields": null,
+    "critic_intruder_obs_fields": null,
+    "state_fields": null,
+    "intruder_state_fields": null,
+    "action_fields": [
+      {
+        "field": "HdgDeg",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      },
+      {
+        "field": "SpdKts",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      },
+      {
+        "field": "AutopilotLnav",
+        "clearance": {
+          "duration": null,
+          "lock": null
+        }
+      }
+    ],
+    "task_info_setup": "",
+    "task_info": [],
+    "task_info_providers": [],
+    "hook_setup": "",
+    "hooks": {
+      "cost": "# Seconds in loss of separation this step.\nreturn float(context.separation.los.time.during_step_s)\n",
+      "reward": "# Every minute flown costs 0.1, every second in loss of separation 1:\n# through the encounter safely, and without a long detour.\nreturn -0.1 * self.config.dt / 60.0 - float(context.separation.los.time.during_step_s)\n",
+      "terminated": "# Out of the airspace: through the encounter.\nreturn context.query(\"IAF\").current.within_lateral or not info[\"in_airspace\"]\n",
+      "truncated": "return False\n"
+    },
+    "dt": 1,
+    "simdt": 1,
+    "asas_dt": 1,
+    "cd_method": "CSTATEBASED",
+    "reso_method": null,
+    "intruder_obs_bounds": "ownship",
+    "pz_radius_nm": 5,
+    "pz_height_ft": 1000,
+    "lookahead_s": 300,
+    "performance_model": "openap",
+    "wind_dir_deg": 270,
+    "wind_kts": 0,
+    "turbulence_kts": 0,
+    "gust_tau_s": 30
+  },
+  "code": {},
+  "scenario_setup": "from bluesky.tools.geo import kwikqdrdist, qdrpos\n\nALT_FT = 20_000\nCAS_KTS = 280.0\nAC_TYPE = \"A320\"\nROUTES = {\"STAR_W\": \"W1\", \"STAR_E\": \"E1\"}   # each route, by its entry fix\nSPAWN_BEFORE_NM = 5.0             # spawn this far before the entry fix, on the inbound line\nIN_TRAIL_S = (90.0, 150.0)        # gaps between consecutive aircraft on one branch\nPER_BRANCH = (2, 4)               # aircraft per branch, inclusive\n\n\n\ndef _point(center, bearing_deg, dist_nm):\n    \"\"\"The point dist_nm from center, on that bearing from it.\"\"\"\n    lat, lon = qdrpos(center.lat_deg, center.lon_deg, bearing_deg, dist_nm)\n    return LatLon(float(lat), float(lon))\n",
+  "scenario_hooks": {}
+}
