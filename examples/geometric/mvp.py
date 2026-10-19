@@ -1,8 +1,9 @@
 """Modified Voltage Potential (MVP) conflict resolution as a policy, flying the
-Random Encounters environment (``examples/environments/random_encounters``).
-From the repository root::
+Random Encounters environment (``examples/environments/random_encounters``),
+or any other in ``examples/environments`` with the observation and actions it
+reads. From the repository root::
 
-    python -m examples.geometric.mvp [episodes] [--render [MODE]]
+    python -m examples.geometric.mvp [episodes] [--env NAME] [--render [MODE]]
 
 BlueSky's own resolution - ``bluesky.traffic.asas.mvp.MVP`` with its default
 ``PastCPA`` resume - computed from what each aircraft observes and flown with
@@ -28,8 +29,10 @@ as Random Encounters does (1 s).
 from __future__ import annotations
 
 import argparse
+import importlib
 import math
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import bluesky as bs
@@ -45,7 +48,6 @@ from bluesky_sandbox.interface.fields.actions import (
     SpdKts,
 )
 from bluesky_sandbox.ui.drivers import WINDOW_RENDER_MODES
-from examples.environments.random_encounters import RandomEncountersEnv
 
 
 _OWNSHIP = (
@@ -250,9 +252,14 @@ class MVP:
 
 
 def main() -> None:
-    """Fly Random Encounters with MVP and count the pairs losing separation."""
+    """Fly an environment with MVP and count the pairs losing separation."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("episodes", type=int, nargs="?", default=10)
+    parser.add_argument(
+        "--env",
+        default="random_encounters",
+        help="an environment in examples/environments, by package name",
+    )
     parser.add_argument(
         "--render",
         nargs="?",
@@ -262,15 +269,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    try:
+        Env = importlib.import_module(f"examples.environments.{args.env}").Env
+    except ModuleNotFoundError as e:
+        if e.name != f"examples.environments.{args.env}":
+            raise  # the environment exists but something it imports does not
+        known = sorted(p.parent.name for p in Path(__file__).parents[1].glob("environments/*/__init__.py"))
+        parser.error(f"no environment {args.env!r}; there are: {', '.join(known)}")
     # Watched, the episode runs in real time: one second a step.
-    env = RandomEncountersEnv(render_mode=args.render, realtime=args.render is not None)
+    env = Env(render_mode=args.render, realtime=args.render is not None)
     try:
         for seed in range(args.episodes):
             env.reset(seed=seed)
             # BlueSky's resolution factor, as its own MVP would read it.
             policy = MVP(env.config, resofach=bs.settings.asas_marh)
             losses = set()
-            while env.agents:
+            # Until no aircraft is left nor still to come: in some environments
+            # the first spawns after the start.
+            while not env.episode_done:
                 if args.render:
                     env.render()  # the first call opens the window
                 env.step(policy.act({agent: env.raw_observation(agent) for agent in env.agents}))
