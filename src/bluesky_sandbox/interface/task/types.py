@@ -29,6 +29,7 @@ import numpy as np
 
 from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.bounds import LatLon, RegionBounds
+from bluesky_sandbox.sim.fixes import RouteView
 from bluesky_sandbox.sim.geometry.conflict import ConflictView
 
 if TYPE_CHECKING:
@@ -382,6 +383,16 @@ class AgentStepContext:
         """
 
         return ConflictView(self.acidx)
+
+    @property
+    def route(self) -> RouteView:
+        """This aircraft's route and how far along it is: a
+        :class:`~bluesky_sandbox.sim.fixes.RouteView` - ``.fixes``, every fix
+        in order; ``.active``, the one it is flying to; ``.previous``, the one
+        before that, passed or skipped by a direct-to. Each a
+        :class:`~bluesky_sandbox.sim.fixes.RouteFix`: where, and how its
+        route step crosses it."""
+        return RouteView(self.acidx)
 
     def query(self, name: Annotated[str, DesignKeys("queryable_result")]) -> Any:
         if name in self._query_result_cache:

@@ -30,6 +30,7 @@ __all__ = [
     "ROUTES",
     "ResolvedRoute",
     "RouteFix",
+    "RouteView",
     "check_window",
     "fix_at",
     "in_window",
@@ -231,3 +232,36 @@ def fix_at(idx: int, route_index: int) -> RouteFix | None:
         crossing=Crossing(alt_ft=alt_ft, speed_kts=speed_kts, rta=rta >= 0.0),
         due_s=rta if rta >= 0.0 else None,
     )
+
+
+@dataclass(frozen=True)
+class RouteView:
+    """Aircraft ``acidx``'s route and how far along it is: each fix as
+    :func:`fix_at` reads it - as resolved for it, or as BlueSky holds a route
+    the sandbox did not make."""
+
+    acidx: int
+
+    def _active_index(self) -> int | None:
+        route = bs.traf.ap.route[self.acidx]
+        active = -1 if route.iactwp is None else int(route.iactwp)
+        return active if 0 <= active < int(route.nwp or 0) else None
+
+    @property
+    def fixes(self) -> tuple[RouteFix, ...]:
+        """Every fix of its route, in order."""
+        n = int(bs.traf.ap.route[self.acidx].nwp or 0)
+        return tuple(fix_at(self.acidx, k) for k in range(n))
+
+    @property
+    def active(self) -> RouteFix | None:
+        """The fix it is flying to; ``None`` without a route."""
+        active = self._active_index()
+        return None if active is None else fix_at(self.acidx, active)
+
+    @property
+    def previous(self) -> RouteFix | None:
+        """The fix before :attr:`active` - the last it passed, or one a
+        direct-to skipped; ``None`` before its first."""
+        active = self._active_index()
+        return None if not active else fix_at(self.acidx, active - 1)
