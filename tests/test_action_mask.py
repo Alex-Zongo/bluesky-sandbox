@@ -295,7 +295,9 @@ def test_a_masked_heading_lets_the_aircraft_fly_out_its_last_vector(flying):
     observations, infos = flying.reset(seed=0)
     (agent,) = observations
     np.testing.assert_array_equal(observations[agent], [0.0])
-    np.testing.assert_array_equal(infos[agent]["action_applied"]["continuous"], [1.0])
+    # No action yet: nothing applied.
+    np.testing.assert_array_equal(infos[agent]["action_applied"]["continuous"], [0.0])
+    np.testing.assert_array_equal(infos[agent]["action_applied"]["binary"], [0.0])
 
     observations, _, _, _, infos = flying.step({agent: _act(180.0, 0)})
     idx = bs.traf.id.index(agent)

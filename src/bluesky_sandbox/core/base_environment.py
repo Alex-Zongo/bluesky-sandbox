@@ -615,7 +615,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
             # Task hooks may consume non-generic action semantics before the
             # configured action fields dispatch aircraft-control commands; an
             # action a hook consumed has no raw values.
-            if not self._hooks.on_agent_action(idx, action):
+            if self._hooks.on_agent_action(idx, action):
+                applied[acid] = [True] * len(self.config.action_fields)
+            else:
                 values = self._action_dispatcher.denormalize(idx, action)
                 self._step_values.record_action(acid, raw_action_values(values))
                 applied[acid] = self._action_dispatcher.apply_values(idx, values)
@@ -1307,11 +1309,13 @@ class BlueskyBaseEnvironment(ParallelEnv):
     ) -> None:
         """With an ``ActionMask`` configured, ``info["action_applied"]``: which
         values of each agent's action took effect, shaped as the action - all
-        of them for an agent given no action, or one a hook consumed."""
+        of one a hook consumed, and none for an agent given no action (on reset,
+        or spawned during the step)."""
         if not any(isinstance(f, ActionMask) for f in self.config.action_fields):
             return
+        nothing = [False] * len(self.config.action_fields)
         for acid, info in infos.items():
-            info["action_applied"] = action_applied(self.config, applied.get(acid))
+            info["action_applied"] = action_applied(self.config, applied.get(acid, nothing))
 
     # ------------------------------------------------------------------
     # Pure helpers
