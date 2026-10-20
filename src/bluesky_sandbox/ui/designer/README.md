@@ -146,8 +146,10 @@ validate and preview against the backend live.
     or config reward function. Only customized hooks are emitted in the generated
     `env.py` — the rest inherit the base, so there's no `super()` boilerplate.
     Old designs (reward in `task.py`) migrate into hooks automatically on load.
-    The override picker is **grouped by category** (task outcome / definitions /
-    lifecycle events) and each hook carries introspected **metadata** (category,
+    The override picker is **grouped by the stage of the loop each hook runs
+    in** - its `HookGroup`: episode / aircraft / step / context / outcome hooks,
+    and diagnostics outside the loop - and each hook carries introspected
+    **metadata** (category,
     params, return type, the base default `return`) shown as a hint beside the
     editor — none of it hard-coded. Scaffolds use that metadata (e.g.
     `define_agent_context` is seeded with a starter that reads

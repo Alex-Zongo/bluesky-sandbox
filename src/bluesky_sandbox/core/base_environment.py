@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from enum import StrEnum
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from functools import cache, cached_property
@@ -105,6 +106,7 @@ __all__ = [
     "SpawnProgress",
     "SpawnRecord",
     "SpawnQueueItem",
+    "HookGroup",
     "ViewSpec",
     "overridable",
 ]
@@ -147,14 +149,36 @@ DoneFlags: TypeAlias = dict[str, bool]
 EnvOptions: TypeAlias = Mapping[str, Any]
 
 
-def overridable(func: F) -> F:
-    """Mark methods intended for environment subclasses to override.
+class HookGroup(StrEnum):
+    """Where in the environment's loop a hook runs: the stage of ``reset()`` or
+    ``step()`` it belongs to."""
 
-    Tags the function so tooling (e.g. the designer catalog) can discover the
-    available hooks by introspection rather than a hard-coded list.
-    """
-    func.__overridable__ = True  # type: ignore[attr-defined]
-    return func
+    #: Reset: the episode sampled and BlueSky reset, once per episode.
+    EPISODE = "episode"
+    #: Spawn and Transition: an aircraft added, or released once done.
+    AIRCRAFT = "aircraft"
+    #: Apply actions and Simulate: the actions commanded, BlueSky advanced.
+    STEP = "step"
+    #: Observe: each agent's context, which its observation and hooks read.
+    CONTEXT = "context"
+    #: Evaluate: each agent's reward, cost and done.
+    OUTCOME = "outcome"
+    #: Outside the loop: what the info and the drivers show.
+    DIAGNOSTICS = "diagnostics"
+
+
+def overridable(group: HookGroup) -> Callable[[F], F]:
+    """Mark a method for environment subclasses to override, as a hook of
+    ``group``. Tags the function so tooling (e.g. the designer catalog) can
+    discover the hooks, and group them by the stage they run in, by
+    introspection rather than a hard-coded list."""
+
+    def mark(func: F) -> F:
+        func.__overridable__ = True  # type: ignore[attr-defined]
+        func.__hook_group__ = HookGroup(group)  # type: ignore[attr-defined]
+        return func
+
+    return mark
 
 
 @cache
