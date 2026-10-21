@@ -8,7 +8,6 @@ from bluesky_sandbox.interface.wrappers import (
     IntruderPaddingWrapper,
     IntrudersKeepWrapper,
     StableIDsParallelWrapper,
-    TimeLimitWrapper,
 )
 
 from .spaces import widen_intruder_space
@@ -17,7 +16,6 @@ from .spaces import widen_intruder_space
 def wrap_parallel_env(
     inner: ParallelEnv,
     *,
-    max_episode_seconds: float = 1800.0,
     max_agents: int = 20,
     override_max_intruders: int | None = None,
     hold_background_until_episode_done: bool = False,
@@ -43,7 +41,7 @@ def wrap_parallel_env(
     if override_max_intruders is not None:
         widen_intruder_space(inner, override_max_intruders)
     return StableIDsParallelWrapper(
-        TimeLimitWrapper(inner, max_seconds=max_episode_seconds),
+        inner,
         max_agents=max_agents,
         hold_background_until_episode_done=hold_background_until_episode_done,
     )

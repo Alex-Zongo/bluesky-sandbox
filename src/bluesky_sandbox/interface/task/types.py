@@ -29,6 +29,7 @@ import numpy as np
 
 from bluesky_sandbox._renames import renamed
 from bluesky_sandbox.sim.bounds import LatLon, RegionBounds
+from bluesky_sandbox.sim.fixes import RouteView
 from bluesky_sandbox.sim.geometry.conflict import ConflictView
 
 if TYPE_CHECKING:
@@ -314,7 +315,10 @@ class AgentStepContext:
     - ``action``: the action it was given this step, as the value each action
       field was set to.
 
-    All read the values the step already computed.
+    All read the values the step already computed. ``applied`` says, by the
+    same names as ``action``, whether each took effect: ``False`` for one
+    masked, refused while a clearance is still being flown, or never given -
+    an aircraft given no action this step, as on the step it spawns.
 
     ``bounds(name)`` is one of the design's named bounds in this episode's
     frame - its boundary as primitives, its center, its frame - and
@@ -337,6 +341,9 @@ class AgentStepContext:
         default_factory=dict, repr=False
     )
     action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
+        default_factory=dict, repr=False
+    )
+    applied: Annotated[Mapping[str, bool], DesignKeys("action")] = field(
         default_factory=dict, repr=False
     )
     #: The design's shapes - areas and points - by name, in this episode's
@@ -382,6 +389,16 @@ class AgentStepContext:
         """
 
         return ConflictView(self.acidx)
+
+    @property
+    def route(self) -> RouteView:
+        """This aircraft's route and how far along it is: a
+        :class:`~bluesky_sandbox.sim.fixes.RouteView` - ``.fixes``, every fix
+        in order; ``.active``, the one it is flying to; ``.previous``, the one
+        before that, passed or skipped by a direct-to. Each a
+        :class:`~bluesky_sandbox.sim.fixes.RouteFix`: where, and how its
+        route step crosses it."""
+        return RouteView(self.acidx)
 
     def query(self, name: Annotated[str, DesignKeys("queryable_result")]) -> Any:
         if name in self._query_result_cache:

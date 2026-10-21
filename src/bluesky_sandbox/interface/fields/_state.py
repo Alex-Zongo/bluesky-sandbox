@@ -180,15 +180,16 @@ def comm_messages(channel: int) -> np.ndarray:
 
 
 # RNG for receiver-side communication-channel noise (IntruderCommMessage's
-# ``noise_std``). Reseeded from the episode seed at reset so training rollouts
-# stay reproducible.
+# ``noise_std``): reseeded by a seeded reset, continued by an unseeded one, as
+# the env's own stream is.
 _COMM_NOISE_RNG = np.random.default_rng()
 
 
 @on_reset
 def _reseed_comm_noise(seed: int | None) -> None:
     global _COMM_NOISE_RNG
-    _COMM_NOISE_RNG = np.random.default_rng(seed)
+    if seed is not None:
+        _COMM_NOISE_RNG = np.random.default_rng(seed)
 
 
 # Each aircraft's action masks as its last action set them: ``{target: masked}``,

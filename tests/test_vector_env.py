@@ -222,7 +222,10 @@ def test_sb3_trains_switches_and_choices():
 
 class _CostlyEnv(BlueskyEnv):
     """Every step of every aircraft costs 1: an aircraft's episode costs its
-    steps flown."""
+    steps flown, until it is truncated 200 s after it spawns."""
+
+    def truncated(self, obs, action, context, info, rng):
+        return info["time_in_env"] >= 200.0
 
     def cost(self, obs, action, terminated, truncated, context, info, rng):
         return 1.0
@@ -234,7 +237,7 @@ def make_costly_env(render_mode=None):
         render_mode=render_mode,
         config=EnvConfig(dt=5.0, obs_fields=[obs.AltFt()], action_fields=[act.HdgDeltaDeg()]),
     )
-    return wrap_parallel_env(env, max_episode_seconds=200.0, max_agents=3)
+    return wrap_parallel_env(env, max_agents=3)
 
 
 def test_ppo_lagrangian_counts_an_aircraft_episode_from_spawn_to_done():

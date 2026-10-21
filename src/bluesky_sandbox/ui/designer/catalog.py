@@ -16,13 +16,14 @@ import re
 import sys
 import textwrap
 import types
+from collections.abc import Sequence
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from bluesky.tools.aero import ft, nm
 from scipy import stats as ss
 
 from bluesky_sandbox.config import _available_aircraft
-from bluesky_sandbox.env import BATCHABLE_HOOKS, BlueskyEnv
+from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as _actions
 from bluesky_sandbox.interface.fields import observations as _observations
 from bluesky_sandbox.config import bluesky_simdt_s
@@ -277,6 +278,18 @@ def _optional_scalar(hint: Any) -> type | None:
 _REFERABLE: dict[type, str] = {ActionField: "action"}
 
 
+def _names(hint: Any) -> bool:
+    """Whether a parameter annotated ``hint`` takes several strings -
+    ``tuple[str, ...]``, ``list[str]`` - such as the fixes a turn is offered
+    after (``DirectToWaypoint.after``)."""
+    if hasattr(hint, "__metadata__"):  # unwrap Annotated[T, ...]
+        hint = get_args(hint)[0]
+    if get_origin(hint) not in (tuple, list, Sequence):
+        return False
+    args = [a for a in get_args(hint) if a is not Ellipsis]
+    return bool(args) and all(a is str for a in args)
+
+
 def _refers(hint: Any) -> str | None:
     """What a parameter annotated ``hint`` names, from :data:`_REFERABLE`."""
     if hint is None:
@@ -323,6 +336,11 @@ def _field_params(cls) -> list[dict[str, Any]]:
         if refers is not None:
             entry["refers"] = refers
         if isinstance(default, (int, float, str, bool)):
+            out.append(entry)
+        elif isinstance(default, (tuple, list)) and _names(hints.get(name, annotation)):
+            # Several names: edited as a list.
+            entry["default"] = list(default)
+            entry["many"] = True
             out.append(entry)
         elif default is None and _optional_scalar(hints.get(name, annotation)) is not None:
             # Optional scalar (e.g. dynamic-bounds ``low``/``high``): expose it so
@@ -653,17 +671,6 @@ def scaffolds() -> dict[str, str]:
 # Always-present task-outcome hooks (never removable in the GUI).
 
 
-def _hook_category(name: str) -> str:
-    """Bucket a hook for the GUI picker — derived from its name, not hard-coded."""
-    if name.removesuffix("_batch") in BATCHABLE_HOOKS:
-        return "task outcome"
-    if name.startswith("define_"):
-        return "definitions"
-    if name.startswith("on_"):
-        return "lifecycle events"
-    return "other"
-
-
 def _hook_default(fn) -> str | None:
     """The base implementation's literal ``return`` value, for display.
 
@@ -723,7 +730,8 @@ def hooks() -> list[dict[str, Any]]:
     """Overridable environment hooks, discovered by introspection.
 
     Returns each ``@overridable`` method's name, full signature, one-line doc,
-    derived ``category`` (for grouping the picker), base ``default`` return, and
+    ``category`` - the stage of the loop it runs in, its ``HookGroup`` - for
+    grouping the picker, base ``default`` return, and
     an optional richer ``scaffold`` — so the designer can offer and describe them
     without a hard-coded list.
     """
@@ -762,7 +770,7 @@ def hooks() -> list[dict[str, Any]]:
                     else "",
                     "returns_none": str(sig.return_annotation) in ("None", "<class 'NoneType'>"),
                     "default": _hook_default(fn),
-                    "category": _hook_category(name),
+                    "category": fn.__hook_group__.value,
                     "always_present": name in DEFAULT_HOOKS,
                     "scaffold": _HOOK_SCAFFOLDS.get(name),
                     "doc": _paragraph(fn),

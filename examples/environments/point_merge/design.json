@@ -1,0 +1,1190 @@
+{
+  "version": 1,
+  "nav_cycle": null,
+  "metadata": {
+    "name": "Point Merge",
+    "note": "Oslo Gardermoen's Point Merge System for runway 01L: arrivals on the ADOPI 3L, BELGU 3L and RIPAM 3L routes, each route's aircraft at least 120 s in trail. The controller turns each aircraft direct to the merge point, VALPU, from its sequencing leg, and may hold or reduce its speed, never below 200 KT, the speed every aircraft crosses VALPU at. Past VALPU the aircraft flies the approach as background traffic. Each aircraft is scored on its time behind the previous one over VALPU, its flight time and the reductions it needed, with a cost for every second in loss of separation; the reward is shaped by the conflicts BlueSky predicts within 5 minutes (PBRS). Each aircraft observes its own and every intruder's time to VALPU along their routes."
+  },
+  "airspace": null,
+  "queryables": {
+    "ADOPI": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "ADOPI"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "NIVDU": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "NIVDU"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "BELGU": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "BELGU"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "VANUK": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "VANUK"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "RIPAM": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "RIPAM"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "ROXIM": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "ROXIM"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "VALPU": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "VALPU"
+      },
+      "color": "white",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": true
+    },
+    "GM400": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM400"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM402": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM402"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM404": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM404"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM405": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM405"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM406": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM406"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM407": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM407"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM408": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM408"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM409": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM409"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM410": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM410"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM455": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM455"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "GM456": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "GM456"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "OGRAS": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "OGRAS"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "XIKLA": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "XIKLA"
+      },
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    },
+    "RW01L": {
+      "type": "waypoint",
+      "shape": {
+        "ref": "RW01L"
+      },
+      "color": "white",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false
+    }
+  },
+  "shapes": {
+    "ADOPI": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.323611,
+          "lon_deg": 9.383333
+        }
+      }
+    },
+    "NIVDU": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.272222,
+          "lon_deg": 9.863889
+        }
+      }
+    },
+    "BELGU": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 61.2125,
+          "lon_deg": 10.597222
+        }
+      }
+    },
+    "VANUK": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.888889,
+          "lon_deg": 10.473611
+        }
+      }
+    },
+    "RIPAM": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.327778,
+          "lon_deg": 9.75
+        }
+      }
+    },
+    "ROXIM": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.617417,
+          "lon_deg": 10.214361
+        }
+      }
+    },
+    "VALPU": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.973611,
+          "lon_deg": 10.802417
+        }
+      }
+    },
+    "GM400": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.281025,
+          "lon_deg": 10.278583
+        }
+      }
+    },
+    "GM402": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.130306,
+          "lon_deg": 10.252833
+        }
+      }
+    },
+    "GM404": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.814444,
+          "lon_deg": 10.256944
+        }
+      }
+    },
+    "GM405": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.027056,
+          "lon_deg": 10.1785
+        }
+      }
+    },
+    "GM406": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.91725,
+          "lon_deg": 10.180472
+        }
+      }
+    },
+    "GM407": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.024306,
+          "lon_deg": 10.211389
+        }
+      }
+    },
+    "GM408": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.920528,
+          "lon_deg": 10.213278
+        }
+      }
+    },
+    "GM409": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.822778,
+          "lon_deg": 10.285444
+        }
+      }
+    },
+    "GM410": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.743583,
+          "lon_deg": 10.41975
+        }
+      }
+    },
+    "GM455": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.748833,
+          "lon_deg": 10.358917
+        }
+      }
+    },
+    "GM456": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.435667,
+          "lon_deg": 10.30525
+        }
+      }
+    },
+    "OGRAS": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 59.993703,
+          "lon_deg": 10.964169
+        }
+      }
+    },
+    "XIKLA": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.044731,
+          "lon_deg": 10.993269
+        }
+      }
+    },
+    "RW01L": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 60.185,
+          "lon_deg": 11.073744
+        }
+      }
+    },
+    "ADOPI_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 60.323611,
+          "lon_deg": 9.383333
+        },
+        "inner_radius_nm": 2.5,
+        "outer_radius_nm": 3.5,
+        "bearing_deg": 271,
+        "half_angle_deg": 30,
+        "n_vertices": 48
+      }
+    },
+    "BELGU_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 61.2125,
+          "lon_deg": 10.597222
+        },
+        "inner_radius_nm": 2.5,
+        "outer_radius_nm": 3.5,
+        "bearing_deg": 346,
+        "half_angle_deg": 30,
+        "n_vertices": 48
+      }
+    },
+    "RIPAM_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "annular_sector",
+        "center": {
+          "lat_deg": 59.327778,
+          "lon_deg": 9.75
+        },
+        "inner_radius_nm": 2.5,
+        "outer_radius_nm": 3.5,
+        "bearing_deg": 231,
+        "half_angle_deg": 30,
+        "n_vertices": 48
+      }
+    }
+  },
+  "spawn": {
+    "type": "spawn_config",
+    "regions": [
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "ADOPI_ENTRY"
+        },
+        "name": "ADOPI",
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "betabinom",
+          "args": [],
+          "kwds": {
+            "n": 4,
+            "a": 2,
+            "b": 1
+          }
+        },
+        "params": {
+          "alt_ft": {
+            "type": "range",
+            "low": 12000,
+            "high": 16000
+          },
+          "spd_kts": 250,
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1800
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "A321": 1,
+            "B738": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "route": "ADOPI3L",
+        "conflict_free_spawn": true,
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120
+      },
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "BELGU_ENTRY"
+        },
+        "name": "BELGU",
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "betabinom",
+          "args": [],
+          "kwds": {
+            "n": 4,
+            "a": 2,
+            "b": 1
+          }
+        },
+        "params": {
+          "alt_ft": {
+            "type": "range",
+            "low": 14000,
+            "high": 18000
+          },
+          "spd_kts": 250,
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1800
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "A321": 1,
+            "B738": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "route": "BELGU3L",
+        "conflict_free_spawn": true,
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120
+      },
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "RIPAM_ENTRY"
+        },
+        "name": "RIPAM",
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "betabinom",
+          "args": [],
+          "kwds": {
+            "n": 4,
+            "a": 2,
+            "b": 1
+          }
+        },
+        "params": {
+          "alt_ft": {
+            "type": "range",
+            "low": 12000,
+            "high": 16000
+          },
+          "spd_kts": 250,
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 1800
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "A321": 1,
+            "B738": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "route": "RIPAM3L",
+        "conflict_free_spawn": true,
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120
+      }
+    ],
+    "route": null,
+    "routes": {
+      "ADOPI3L": [
+        {
+          "waypoint": "ADOPI",
+          "speed_kts": 250,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "NIVDU",
+          "speed_kts": 250,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM402",
+          "speed_kts": 220,
+          "speed_above_kts": 0,
+          "alt_ft": 10000
+        },
+        {
+          "waypoint": "GM405",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM406",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM404",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM455",
+          "speed_kts": 220,
+          "speed_above_kts": 0,
+          "alt_ft": 10000
+        },
+        {
+          "waypoint": "VALPU",
+          "alt_ft": 5000,
+          "speed_kts": 200,
+          "alt_below_ft": 0,
+          "speed_above_kts": 0
+        },
+        {
+          "route": "APP01L"
+        }
+      ],
+      "BELGU3L": [
+        {
+          "waypoint": "BELGU",
+          "speed_kts": 250,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "VANUK",
+          "speed_kts": 250,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM456",
+          "alt_ft": 12000,
+          "speed_kts": 250,
+          "alt_above_ft": 0,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM400",
+          "speed_kts": 250,
+          "speed_above_kts": 0,
+          "alt_ft": 9000
+        },
+        {
+          "waypoint": "GM402",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM405",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM406",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM404",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM455",
+          "speed_kts": 220,
+          "speed_above_kts": 0,
+          "alt_ft": 9000
+        },
+        {
+          "waypoint": "VALPU",
+          "alt_ft": 5000,
+          "speed_kts": 200,
+          "alt_below_ft": 0,
+          "speed_above_kts": 0
+        },
+        {
+          "route": "APP01L"
+        }
+      ],
+      "RIPAM3L": [
+        {
+          "waypoint": "RIPAM",
+          "speed_kts": 250,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "ROXIM",
+          "alt_ft": 12000,
+          "speed_kts": 250,
+          "alt_below_ft": 0,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM410",
+          "speed_kts": 220,
+          "speed_above_kts": 0,
+          "alt_ft": 11000
+        },
+        {
+          "waypoint": "GM409",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM408",
+          "speed_kts": 220,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "GM407",
+          "speed_kts": 220,
+          "speed_above_kts": 0,
+          "alt_ft": 11000
+        },
+        {
+          "waypoint": "VALPU",
+          "alt_ft": 5000,
+          "speed_kts": 200,
+          "alt_below_ft": 0,
+          "speed_above_kts": 0
+        },
+        {
+          "route": "APP01L"
+        }
+      ],
+      "APP01L": [
+        {
+          "waypoint": "OGRAS",
+          "alt_ft": 4000,
+          "alt_below_ft": 0,
+          "speed_kts": 180,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "XIKLA",
+          "alt_ft": 3500,
+          "alt_below_ft": 0,
+          "speed_kts": 160,
+          "speed_above_kts": 0
+        },
+        {
+          "waypoint": "RW01L",
+          "alt_ft": 707,
+          "speed_kts": 140,
+          "speed_above_kts": 0,
+          "flyover": true
+        }
+      ]
+    }
+  },
+  "transform": null,
+  "env": {
+    "obs_fields": [
+      {
+        "field": "WaypointDistanceNm",
+        "kwargs": {
+          "query_name": "VALPU",
+          "low": 0,
+          "high": 80,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "PowerNormalizer",
+            "kwargs": {
+              "power": 2,
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "WaypointEteS",
+        "kwargs": {
+          "query_name": "VALPU",
+          "low": 0,
+          "high": 2400,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "WaypointBearingDeg",
+        "kwargs": {
+          "query_name": "VALPU",
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "WaypointRouteReached",
+        "kwargs": {
+          "query_name": "GM405"
+        }
+      },
+      {
+        "field": "WaypointRouteReached",
+        "kwargs": {
+          "query_name": "GM410"
+        }
+      },
+      {
+        "field": "WaypointRouteActive",
+        "kwargs": {
+          "query_name": "VALPU"
+        }
+      },
+      {
+        "field": "AltFt",
+        "kwargs": {
+          "low": 4000,
+          "high": 19000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "CasKts",
+        "kwargs": {
+          "low": 180,
+          "high": 320,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ApCasKts",
+        "kwargs": {
+          "low": 180,
+          "high": 320,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "VsFtMin",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      }
+    ],
+    "intruder_obs_fields": [
+      {
+        "field": "WaypointDistanceNm",
+        "kwargs": {
+          "query_name": "VALPU"
+        },
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -80,
+          "high": 80,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SignedPowerNormalizer",
+            "kwargs": {
+              "power": 2,
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "WaypointEteS",
+        "kwargs": {
+          "query_name": "VALPU"
+        },
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -2400,
+          "high": 2400,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "WaypointRouteActive",
+        "kwargs": {
+          "query_name": "VALPU"
+        }
+      },
+      {
+        "field": "WaypointRouteReached",
+        "kwargs": {
+          "query_name": "GM405"
+        }
+      },
+      {
+        "field": "WaypointRouteReached",
+        "kwargs": {
+          "query_name": "GM410"
+        }
+      },
+      {
+        "field": "WaypointRouteReached",
+        "kwargs": {
+          "query_name": "VALPU"
+        }
+      },
+      {
+        "field": "WaypointBearingDeg",
+        "kwargs": {
+          "query_name": "VALPU",
+          "normalizer": {
+            "type": "normalizer",
+            "name": "CircularNormalizer",
+            "kwargs": {}
+          }
+        }
+      },
+      {
+        "field": "AltFt",
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -5000,
+          "high": 5000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ApAltFt",
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -5000,
+          "high": 5000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ActiveRouteWaypointAltDiffFt",
+        "kwargs": {
+          "low": -5000,
+          "high": 5000,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "CasKts",
+        "transform": "relative_to_own",
+        "transform_kwargs": {
+          "low": -100,
+          "high": 100,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "DistToOwnNm",
+        "kwargs": {
+          "low": 0,
+          "high": 120,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "PowerNormalizer",
+            "kwargs": {
+              "power": 2,
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "InConf"
+      },
+      {
+        "field": "ConflictTcpaS",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "SymmetricNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictHorizontalDistAtCpaNm",
+        "kwargs": {
+          "low": 0,
+          "high": 10,
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      },
+      {
+        "field": "ConflictVerticalSepAtCpaFt",
+        "kwargs": {
+          "normalizer": {
+            "type": "normalizer",
+            "name": "MinMaxNormalizer",
+            "kwargs": {
+              "clipped": true
+            }
+          }
+        }
+      }
+    ],
+    "critic_obs_fields": null,
+    "critic_intruder_obs_fields": null,
+    "state_fields": null,
+    "intruder_state_fields": null,
+    "action_fields": [
+      {
+        "field": "DirectToWaypoint",
+        "kwargs": {
+          "waypoint": "VALPU",
+          "after": [
+            "GM405",
+            "GM410"
+          ]
+        }
+      },
+      {
+        "field": "ApSpdDeltaKts",
+        "kwargs": {
+          "low": -50,
+          "high": 0,
+          "command_floor": 200,
+          "grid": {
+            "type": "grid",
+            "step": 10,
+            "on": "target"
+          },
+          "normalizer": {
+            "type": "normalizer",
+            "name": "StepNormalizer",
+            "kwargs": {
+              "steps_each_way": 5,
+              "steps_up": 0,
+              "include_zero": false
+            }
+          }
+        },
+        "clearance": {
+          "duration": null,
+          "lock": "captured"
+        }
+      }
+    ],
+    "task_info_setup": "",
+    "task_info": [],
+    "task_info_providers": [],
+    "hook_setup": "import bluesky as bs\nimport numpy as np\nfrom bluesky.tools.aero import kts, vcas2tas\n\nfrom bluesky_sandbox.sim.geometry.conflict import detection\n\n# Spacing over VALPU, in time behind the previous aircraft: time is what the\n# runway receives. Target 110 s; minimum 75 s, about 3 NM at 140 kt on final.\nSPACING_S = 110.0\nMIN_SPACING_S = 75.0\n# Delay cost, per minute flown.\nTIME_COST_PER_MIN = 0.1\n# Workload cost, per speed reduction given.\nCLEARANCE_COST = 0.02\n# Potential-based shaping on predicted conflicts (Ng et al., 1999): it signals\n# a conflict minutes before the loss without changing the optimal policy,\n# provided SHAPING_GAMMA equals PPO's discount (SB3's default, 0.99).\nSHAPING_WEIGHT = 0.2\nSHAPING_GAMMA = 0.99\n# Distance from the threshold at which an aircraft has landed, NM.\nLANDED_NM = 0.3\n\n\ndef slow_from_m(idx, cas_kts):\n    \"\"\"Distance before a fix at which the aircraft at ``idx`` starts slowing to\n    cross it at ``cas_kts``, m: twice its deceleration distance, since it slows\n    less while descending, plus its fly-by turn distance. BlueSky's VNAV uses\n    the deceleration distance alone and crosses fixes too fast.\"\"\"\n    target = vcas2tas(cas_kts * kts, bs.traf.alt[idx])\n    slowing = 0.5 * abs(bs.traf.tas[idx] ** 2 - target**2) / max(float(bs.traf.perf.axmax[idx]), 0.001)\n    return 2.0 * slowing + float(bs.traf.actwp.turndist[idx])\n\n\ndef spacing_score(gap_s):\n    \"\"\"Score of a gap of ``gap_s`` behind the previous aircraft over VALPU: 0 at\n    ``SPACING_S`` or more, falling linearly to -1 at ``MIN_SPACING_S``. The\n    first aircraft, with no gap, scores 0.\"\"\"\n    if gap_s is None:\n        return 0.0\n    short = (SPACING_S - gap_s) / (SPACING_S - MIN_SPACING_S)\n    return -min(max(short, 0.0), 1.0)\n\n\ndef potential(idx, horizon_s):\n    \"\"\"Shaping potential of the aircraft at ``idx``: ``-SHAPING_WEIGHT`` per\n    predicted loss of separation, weighted from 0 at ``horizon_s`` ahead to 1\n    when in loss now. The prediction is BlueSky's own conflict detection.\"\"\"\n    soon = np.clip(1.0 - detection().tlos_s[idx] / horizon_s, 0.0, 1.0)\n    soon[idx] = 0.0\n    return -SHAPING_WEIGHT * float(soon.sum())\n",
+    "hooks": {
+      "cost": "# Seconds in loss of separation this step: the constrained quantity (limit 0).\nreturn float(context.separation.los.time.during_step_s)\n",
+      "on_agent_done": "# Past VALPU the approach takes over: the aircraft flies on as background\n# traffic that later arrivals must stay clear of. Any other end removes it.\nreturn AircraftControlState.BACKGROUND if terminated else AircraftControlState.DELETE\n",
+      "on_aircraft_spawned": "# BlueSky leaves VNAV off for a route given after creation: switch it on to\n# fly the published altitudes. Clearing the current speed turns VNAV speed off,\n# since on_sim_step manages speed instead: VNAV crosses fixes too fast.\nbs.stack.stack(f\"VNAV {callsign} ON\")\nidx = bs.traf.id.index(callsign)\nbs.stack.stack(f\"SPD {callsign} {bs.traf.cas[idx] / kts:.0f}\")\n",
+      "on_episode_reset": "# Per-episode state: when the last aircraft crossed VALPU, for the spacing\n# score, and each aircraft's last potential, for the shaping.\nself.last_over_merge_s = None\nself.potentials = {}\n",
+      "on_sim_step": "# Every simulator substep, so neither landing nor slowing is late by a step.\nfor idx, acid in enumerate(bs.traf.id):\n    context = self.agent_context(idx)\n    # At the threshold the aircraft has landed.\n    if context.query(\"RW01L\").current.distance_nm < LANDED_NM:\n        self.mark_aircraft_for_deletion(acid)\n        continue\n    # Cross the active fix no faster than its published speed, slowing just in\n    # time; a lower cleared speed is kept.\n    active = context.route.active\n    published = None if active is None else active.crossing.speed_kts\n    if (\n        published is not None\n        and bs.traf.selspd[idx] / kts > published + 0.5\n        and bs.traf.ap.dist2wp[idx] < slow_from_m(idx, published)\n    ):\n        bs.stack.stack(f\"SPD {acid} {published:.0f}\")\n",
+      "reward": "# Delay: every step flown.\nr = -TIME_COST_PER_MIN * self.config.dt / 60.0\n# Workload: a speed reduction given this step.\nif context.applied[\"ap_spd_delta_kts\"]:\n    r -= CLEARANCE_COST\n# Spacing: scored once, as the aircraft crosses VALPU.\nif terminated:\n    now = float(bs.sim.simt)\n    gap = None if self.last_over_merge_s is None else now - self.last_over_merge_s\n    self.last_over_merge_s = now\n    r += spacing_score(gap)\n# Shaping: the potential's change, with the potential 0 at the flight's end.\nnow = 0.0 if terminated else potential(context.acidx, self.config.lookahead_s)\nr += SHAPING_GAMMA * now - self.potentials.get(context.acid, 0.0)\nself.potentials[context.acid] = now\nreturn r\n",
+      "terminated": "# The flight ends at VALPU, the IAF, where the approach takes over.\nreturn context.query(\"VALPU\").step.reached\n",
+      "truncated": "# Never: every flight reaches VALPU.\nreturn False\n"
+    },
+    "dt": 10,
+    "simdt": 0.5,
+    "asas_dt": null,
+    "cd_method": "CSTATEBASED",
+    "reso_method": null,
+    "intruder_obs_bounds": "ownship",
+    "pz_radius_nm": 3,
+    "pz_height_ft": 999,
+    "lookahead_s": 300,
+    "performance_model": "openap",
+    "wind_dir_deg": 270,
+    "wind_kts": 0,
+    "turbulence_kts": 0,
+    "gust_tau_s": 30
+  },
+  "code": {},
+  "scenario_setup": "",
+  "scenario_hooks": {}
+}

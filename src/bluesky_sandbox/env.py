@@ -12,6 +12,7 @@ from bluesky_sandbox.core.base_environment import (
     BlueskyBaseEnvironment,
     RenderMode,
     ViewSpec,
+    HookGroup,
     overridable,
 )
 from bluesky_sandbox.core.batch import StepBatch
@@ -113,18 +114,18 @@ class BlueskyEnv(BlueskyBaseEnvironment):
             raise ValueError("define_task_info_providers() must return callables.")
         self.config.task_info_providers.extend(task_info_providers)
 
-    @overridable
+    @overridable(HookGroup.DIAGNOSTICS)
     def define_task_info_providers(self) -> Sequence[TaskInfoProvider]:
         """Callables that add this task's entries to each agent's
         ``info["task"]``, after the config's own."""
         return ()
 
-    @overridable
+    @overridable(HookGroup.EPISODE)
     def on_episode_loaded(self, _episode_spec: EpisodeSpec) -> None:
         """Hook for tasks to read sampled episode-specific data."""
         return
 
-    @overridable
+    @overridable(HookGroup.EPISODE)
     def on_episode_reset(
         self,
         *,
@@ -134,29 +135,29 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """Hook for task-local reset bookkeeping before spawning."""
         return
 
-    @overridable
+    @overridable(HookGroup.AIRCRAFT)
     def on_before_spawn(self) -> None:
         """Hook after reset state is cleared and before spawns are sampled."""
         return
 
-    @overridable
+    @overridable(HookGroup.AIRCRAFT)
     def on_after_spawn(self, *, rng: np.random.Generator) -> None:
         """Runs at reset once the episode's first aircraft are spawned, each
         controlled or background, before the first observation."""
         del rng
 
-    @overridable
+    @overridable(HookGroup.STEP)
     def on_before_step(self) -> None:
         """Hook before actions are applied for one environment step."""
         return
 
-    @overridable
+    @overridable(HookGroup.STEP)
     def on_sim_step(self) -> None:
         """Runs once per simulator substep, after BlueSky advances - an env
         step is several - for what must be sampled between env steps."""
         return
 
-    @overridable
+    @overridable(HookGroup.STEP)
     def on_agent_action(self, _idx: int, _action: Any) -> bool:
         """Handle a live controlled-agent action before field dispatch.
 
@@ -166,21 +167,21 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         return False
 
-    @overridable
+    @overridable(HookGroup.DIAGNOSTICS)
     def define_aircraft_readouts(self, _acid: str) -> AircraftReadouts:
         """Rows for this aircraft's readout in the GUI drivers, in order:
         ``{label: value}`` (or ``(label, value)`` pairs, or
         :class:`AircraftReadoutItem` s)."""
         return {}
 
-    @overridable
+    @overridable(HookGroup.DIAGNOSTICS)
     def define_waypoint_readouts(self, _acid: str) -> tuple[WaypointReadoutItem, ...]:
         """Values to show on this aircraft's route waypoints in the GUI
         drivers' readout: one :class:`WaypointReadoutItem` each, naming its
         waypoint, its section (metadata or constraints), key and value."""
         return ()
 
-    @overridable
+    @overridable(HookGroup.AIRCRAFT)
     def on_aircraft_spawned(
         self,
         _callsign: str,
@@ -189,7 +190,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """Hook for tasks that need to tune aircraft after route creation."""
         return
 
-    @overridable
+    @overridable(HookGroup.AIRCRAFT)
     def define_initial_aircraft_control_state(
         self,
         _callsign: str,
@@ -198,7 +199,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """Define whether a spawned aircraft starts controlled or background."""
         return AircraftControlState.CONTROLLED
 
-    @overridable
+    @overridable(HookGroup.AIRCRAFT)
     def on_agent_done(
         self,
         _acid: str,
@@ -211,17 +212,17 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         del terminated, truncated
         return AircraftControlState.DELETE
 
-    @overridable
+    @overridable(HookGroup.CONTEXT)
     def on_before_agent_contexts(self) -> None:
         """Prepare task-local data used by ``define_agent_context``."""
         return
 
-    @overridable
+    @overridable(HookGroup.CONTEXT)
     def define_agent_context(self, _acid: str, _acidx: int) -> object:
         """Build task-specific data for one agent context."""
         return None
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def reward(
         self,
         _obs: BaseObs,
@@ -239,7 +240,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         return 0.0
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def cost(
         self,
         _obs: BaseObs,
@@ -258,7 +259,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         return 0.0
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def terminated(
         self,
         _obs: BaseObs,
@@ -270,7 +271,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """Per-agent termination (goal reached / out of bounds / ...)."""
         return False
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def truncated(
         self,
         _obs: BaseObs,
@@ -284,7 +285,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
 
     # Batched counterparts: one call for every agent, with a StepBatch. Each is
     # optional - define it instead of the per-agent hook, never as well.
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def reward_batch(self, batch: StepBatch) -> np.ndarray:
         """Every agent's reward at once: one per ``batch.acids``, in that order -
         shape ``(n_agents,)``, or ``(n_agents, k)`` for ``k`` components.
@@ -294,7 +295,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         raise NotImplementedError
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def cost_batch(self, batch: StepBatch) -> np.ndarray:
         """Every agent's cost at once: shape ``(n_agents,)``, or
         ``(n_agents, k)`` for ``k`` constraints, in the order of ``batch.acids``.
@@ -304,7 +305,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         raise NotImplementedError
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def terminated_batch(self, batch: StepBatch) -> np.ndarray:
         """Every agent's termination at once: one bool per ``batch.acids``.
 
@@ -312,7 +313,7 @@ class BlueskyEnv(BlueskyBaseEnvironment):
         """
         raise NotImplementedError
 
-    @overridable
+    @overridable(HookGroup.OUTCOME)
     def truncated_batch(self, batch: StepBatch) -> np.ndarray:
         """Every agent's truncation at once: one bool per ``batch.acids``.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from enum import StrEnum
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from functools import cache, cached_property
@@ -105,6 +106,7 @@ __all__ = [
     "SpawnProgress",
     "SpawnRecord",
     "SpawnQueueItem",
+    "HookGroup",
     "ViewSpec",
     "overridable",
 ]
@@ -147,14 +149,36 @@ DoneFlags: TypeAlias = dict[str, bool]
 EnvOptions: TypeAlias = Mapping[str, Any]
 
 
-def overridable(func: F) -> F:
-    """Mark methods intended for environment subclasses to override.
+class HookGroup(StrEnum):
+    """Where in the environment's loop a hook runs: the stage of ``reset()`` or
+    ``step()`` it belongs to."""
 
-    Tags the function so tooling (e.g. the designer catalog) can discover the
-    available hooks by introspection rather than a hard-coded list.
-    """
-    func.__overridable__ = True  # type: ignore[attr-defined]
-    return func
+    #: Reset: the episode sampled and BlueSky reset, once per episode.
+    EPISODE = "episode"
+    #: Spawn and Transition: an aircraft added, or released once done.
+    AIRCRAFT = "aircraft"
+    #: Apply actions and Simulate: the actions commanded, BlueSky advanced.
+    STEP = "step"
+    #: Observe: each agent's context, which its observation and hooks read.
+    CONTEXT = "context"
+    #: Evaluate: each agent's reward, cost and done.
+    OUTCOME = "outcome"
+    #: Outside the loop: what the info and the drivers show.
+    DIAGNOSTICS = "diagnostics"
+
+
+def overridable(group: HookGroup) -> Callable[[F], F]:
+    """Mark a method for environment subclasses to override, as a hook of
+    ``group``. Tags the function so tooling (e.g. the designer catalog) can
+    discover the hooks, and group them by the stage they run in, by
+    introspection rather than a hard-coded list."""
+
+    def mark(func: F) -> F:
+        func.__overridable__ = True  # type: ignore[attr-defined]
+        func.__hook_group__ = HookGroup(group)  # type: ignore[attr-defined]
+        return func
+
+    return mark
 
 
 @cache
@@ -302,6 +326,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         # This step for every agent at once, built on first use by a batched hook.
         self._batch: StepBatch | None = None
         self._agent_context_cache_enabled = False
+        # The episodes' random stream: started by a seeded reset, continued by
+        # an unseeded one.
+        self._rng: np.random.Generator | None = None
 
         # Aircraft scheduled to spawn later in the episode (spawn_time > 0).
         # Sorted ascending by spawn_time; drained at the top of each step()
@@ -446,7 +473,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._clear_agent_context_cache()
         self._step_values.clear()
         self._batch = None
-        self._rng = np.random.default_rng(seed)
+        # A seed starts the stream; a reset without one goes on with it, as
+        # Gymnasium's do - so a vector env seeded once, whose later resets pass
+        # no seed, plays the same episodes every run.
+        if seed is not None or self._rng is None:
+            self._rng = np.random.default_rng(seed)
         self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
         resolve_spawn_aircraft_types(self.config, self.episode_spec.spawn)
@@ -615,10 +646,15 @@ class BlueskyBaseEnvironment(ParallelEnv):
             # Task hooks may consume non-generic action semantics before the
             # configured action fields dispatch aircraft-control commands; an
             # action a hook consumed has no raw values.
-            if not self._hooks.on_agent_action(idx, action):
+            if self._hooks.on_agent_action(idx, action):
+                applied[acid] = [True] * len(self.config.action_fields)
+            else:
                 values = self._action_dispatcher.denormalize(idx, action)
                 self._step_values.record_action(acid, raw_action_values(values))
                 applied[acid] = self._action_dispatcher.apply_values(idx, values)
+            self._step_values.record_applied(
+                acid, dict(zip(unique_names_of(self.config.action_fields), applied[acid]))
+            )
         return applied
 
     def _outcomes(
@@ -1149,6 +1185,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             obs=self._raw_observation(acidx),
             state=self._raw_state(acidx),
             action=self._step_values.action(acid),
+            applied=self._step_values.applied(acid, unique_names_of(self.config.action_fields)),
             airspace=self._build_airspace_context(acidx),
             separation=self._traffic_monitor.build_separation_context(acid, acidx),
             shapes=self.episode_shapes,
@@ -1307,11 +1344,13 @@ class BlueskyBaseEnvironment(ParallelEnv):
     ) -> None:
         """With an ``ActionMask`` configured, ``info["action_applied"]``: which
         values of each agent's action took effect, shaped as the action - all
-        of them for an agent given no action, or one a hook consumed."""
+        of one a hook consumed, and none for an agent given no action (on reset,
+        or spawned during the step)."""
         if not any(isinstance(f, ActionMask) for f in self.config.action_fields):
             return
+        nothing = [False] * len(self.config.action_fields)
         for acid, info in infos.items():
-            info["action_applied"] = action_applied(self.config, applied.get(acid))
+            info["action_applied"] = action_applied(self.config, applied.get(acid, nothing))
 
     # ------------------------------------------------------------------
     # Pure helpers

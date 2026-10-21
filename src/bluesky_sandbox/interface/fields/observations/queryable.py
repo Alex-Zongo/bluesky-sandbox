@@ -10,11 +10,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import bluesky as bs
 import numpy as np
+from bluesky.tools.aero import nm
 
 from bluesky_sandbox.sim.queryables import WaypointResult
 
-from .._common import _BroadcastObs
+from .._common import _MIN_GS_MS, _BroadcastObs
+from .._route import _route_along_distance_nm
 from ..base import (
     EnvObsField,
     ObsMeta,
@@ -390,6 +393,53 @@ class WaypointRouteIndex(WaypointResultObsField):
     def expected(self, idx: int) -> Any:
         result = self.waypoint_result(idx)
         return -1.0 if result.route.index is None else float(result.route.index)
+
+
+@dataclass(frozen=True)
+class WaypointEteS(WaypointResultObsField):
+    """Time to this waypoint along the aircraft's route, s: the legs still to
+    fly to it - the direct range to the active fix, then fix by fix - at the
+    current ground speed. 0 once it is reached, or with it off the route: pair
+    with :class:`WaypointRouteReached` where that matters.
+
+    As an intruder field, ``.relative_to_own()``, it is how much later
+    (positive) or sooner than the ownship each intruder reaches the waypoint -
+    a merge point's spacing in time, seen ahead.
+    """
+
+    queryable_spec = QueryableFieldSpec(
+        kind=QueryableKind.WAYPOINT,
+        path="route.index",
+        label="Time enroute",
+        description="Time to the waypoint along the aircraft route, seconds, at its ground speed.",
+        requirements=(QueryableFieldRequirement.ROUTE,),
+    )
+
+    low: float = 0.0
+    high: float = 3600.0
+
+    @property
+    def meta(self) -> ObsMeta:
+        return ObsMeta(f"{self.query_name.lower()}_ete_s", Unit.S, ObsQuantity.TIME)
+
+    def _values(self, indices: np.ndarray) -> np.ndarray:
+        route_index = self._waypoint_column(indices, "route.index")
+        return np.array([_ete_s(int(i), k) for i, k in zip(indices, route_index)], dtype=np.float64)
+
+    def expected(self, idx: int) -> Any:
+        index = self.waypoint_result(idx).route.index
+        return _ete_s(idx, -1 if index is None else index)
+
+
+def _ete_s(idx: int, route_index: float) -> float:
+    """Aircraft ``idx``'s time along its route to its fix ``route_index``, s."""
+    if not np.isfinite(route_index) or route_index < 0:
+        return 0.0
+    offset = int(route_index) - int(bs.traf.ap.route[idx].iactwp)
+    dist_nm = _route_along_distance_nm(idx, offset) if offset >= 0 else None
+    if dist_nm is None:
+        return 0.0
+    return dist_nm * nm / max(float(bs.traf.gs[idx]), _MIN_GS_MS)
 
 
 @dataclass(frozen=True)

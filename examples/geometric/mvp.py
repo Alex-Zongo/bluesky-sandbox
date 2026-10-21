@@ -5,25 +5,17 @@ reads. From the repository root::
 
     python -m examples.geometric.mvp [episodes] [--env NAME] [--render [MODE]]
 
-BlueSky's own resolution - ``bluesky.traffic.asas.mvp.MVP`` with its default
-``PastCPA`` resume - computed from what each aircraft observes and flown with
-its actions, instead of from inside the simulator:
+BlueSky's MVP with its default ``PastCPA`` resume, computed by each aircraft
+from its own observation: each intruder in conflict adds its MVP velocity
+change, flown as a track and speed within the envelope; once past every closest
+approach, out of the zone and not bouncing, the aircraft resumes its route at
+its earlier speed.
 
-* every pair the observation flags in conflict (``in_conf``) adds its MVP
-  velocity change to the ownship's; with any conflict anywhere, each aircraft
-  steers to its new track and ground speed (``hdg_deg``, ``spd_kts``), capped to
-  its speed envelope, exactly as BlueSky recomputes for all aircraft then;
-* a pair stays resolving until it is past its closest approach, out of the
-  zone and not bouncing; when none of an aircraft's pairs is, it resumes its
-  route (``autopilot_lnav``) at the speed it had selected before.
-
-Horizontal resolution only - BlueSky's default (``RMETHH BOTH``), cooperative
-(each aircraft of a pair takes its share), no priority rules and no wind.
-Every aircraft must be an agent, as every aircraft resolves in BlueSky's.
-
-It acts on the state BlueSky's would when the environment decides as often as
-BlueSky detects conflicts, on the same instants: ``dt == simdt == asas_dt``,
-as Random Encounters does (1 s).
+Unlike BlueSky's, it is decentralized: an aircraft keeps its last clearance
+until it resumes, where BlueSky recomputes every aircraft while any pair is in
+conflict. Horizontal and cooperative, as BlueSky's default, so every aircraft
+must be an agent. It needs ``dt == simdt == asas_dt`` (1 s in Random
+Encounters) to act on the state BlueSky's would.
 """
 
 from __future__ import annotations
@@ -70,11 +62,10 @@ _ACTIONS = (HdgDeg, SpdKts, AutopilotLnav)
 
 
 def mvp_dv(drel: np.ndarray, vrel: np.ndarray, tcpa: float, rpz_m: float) -> np.ndarray:
-    """The MVP horizontal velocity change (m/s) for one conflict pair, as
-    BlueSky's ``MVP.MVP``: the intruder at ``drel`` (m) moving at ``vrel`` (m/s)
-    relative to the ownship, its closest approach ``tcpa`` (s) away, pushed out
-    to ``rpz_m`` (the zone times the resolution factor). Any frame whose axes
-    are a rotation of east/north; the ownship subtracts it from its velocity."""
+    """MVP's velocity change (m/s) for one conflict pair, as BlueSky's
+    ``MVP.MVP``: the intruder at ``drel`` (m), moving at ``vrel`` (m/s) relative
+    to the ownship, closest approach in ``tcpa`` (s), resolved to ``rpz_m``. In
+    any frame rotated from east/north; the ownship subtracts it."""
     dist = math.hypot(drel[0], drel[1])
     dcpa = drel + vrel * tcpa
     dabs = math.hypot(dcpa[0], dcpa[1])
@@ -91,7 +82,8 @@ def mvp_dv(drel: np.ndarray, vrel: np.ndarray, tcpa: float, rpz_m: float) -> np.
 
 
 class MVP:
-    """MVP for every agent of an environment built with ``config``.
+    """MVP for every agent of an environment built with ``config``, each on its
+    own observation and memory.
 
     ::
 
@@ -100,10 +92,10 @@ class MVP:
         env.reset(seed=0)
         policy.reset()
         while env.agents:
-            env.step(policy.act({a: env.raw_observation(a) for a in env.agents}))
+            env.step({a: policy.act(a, env.raw_observation(a)) for a in env.agents})
 
-    ``resofach`` is BlueSky's horizontal resolution factor (``RFACH``): the
-    zone resolved to is the protected zone times it.
+    ``resofach`` is BlueSky's ``RFACH``: the zone is resolved to its radius
+    times it.
     """
 
     def __init__(self, config: EnvConfig, *, resofach: float = 1.01) -> None:
@@ -131,113 +123,91 @@ class MVP:
         self.reset()
 
     def reset(self) -> None:
-        """Forget the episode: pairs still resolving, speeds to restore."""
-        self._resolving: set[tuple[str, str]] = set()
+        """Forget the episode."""
+        self._resolving: dict[str, set[str]] = {}
         self._selected_cas_kts: dict[str, float] = {}
 
-    def act(self, observations: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-        """Each agent's action for ``observations`` - each agent's raw
-        observation (``env.raw_observation``). An intruder that is no longer an
-        agent has left: the environment removes it before the next step."""
-        own = {acid: raw["ownship"] for acid, raw in observations.items()}
-        pairs = {}
-        for acid, raw in observations.items():
-            rows = raw["intruders"]
-            for k, other in enumerate(rows["acid"]):
-                if other in own:
-                    pairs[acid, other] = (
-                        # Cross, along: a rotation of east, north.
-                        np.array(
-                            [
-                                rows["rel_pos_cross_track_nm"][k],
-                                rows["rel_pos_along_track_nm"][k],
-                            ]
-                        )
-                        * nm,
-                        np.array(
-                            [
-                                rows["rel_vel_cross_track_kts"][k],
-                                rows["rel_vel_along_track_kts"][k],
-                            ]
-                        )
-                        * kts,
-                        float(rows["conflict_tcpa_s"][k]),
-                        bool(rows["in_conf"][k] > 0.5),
-                    )
-        conflicts = [pair for pair, (*_, in_conf) in pairs.items() if in_conf]
-        targets = self._resolve(own, pairs, conflicts) if conflicts else {}
-        active = self._past_cpa(own, pairs, conflicts)
-
-        actions = {}
-        for acid, ownship in own.items():
-            given: dict[str, float] = {}
-            if active.get(acid) and acid in targets:
-                self._selected_cas_kts.setdefault(acid, float(ownship["ap_cas_kts"]))
-                given["hdg_deg"], given["spd_kts"] = targets[acid]
-            elif active.get(acid) is False:
-                given["autopilot_lnav"] = 1.0
-                if acid in self._selected_cas_kts:
-                    given["spd_kts"] = self._selected_cas_kts.pop(acid)
-            actions[acid] = self._action(given)
-        return actions
-
-    def _resolve(self, own, pairs, conflicts) -> dict[str, tuple[float, float]]:
-        """Each aircraft's new track (deg) and CAS (kts) - BlueSky's
-        ``MVP.resolve``, in each ownship's track frame."""
-        dv = {acid: np.zeros(2) for acid in own}
-        for pair in conflicts:
-            drel, vrel, tcpa, _in_conf = pairs[pair]
-            dv[pair[0]] -= mvp_dv(drel, vrel, tcpa, self._rpz_m * self.resofach)
-        targets = {}
-        for acid, ownship in own.items():
-            cross, along = dv[acid][0], float(ownship["gs_kts"]) * kts + dv[acid][1]
-            track = (
-                float(ownship["trk_deg"]) + math.degrees(math.atan2(cross, along))
-            ) % 360.0
-            # Capped as BlueSky does: the envelope's speeds against ground speed.
-            gs = min(
-                max(math.hypot(cross, along), float(ownship["perf_vmin_kts"]) * kts),
-                float(ownship["perf_vmax_kts"]) * kts,
+    def act(self, agent: str, observation: Mapping[str, Mapping[str, Any]]) -> Any:
+        """``agent``'s action for its raw observation (``env.raw_observation``)."""
+        own = observation["ownship"]
+        rows = observation["intruders"]
+        pairs = {
+            other: (
+                # Cross, along: a rotation of east, north.
+                np.array(
+                    [rows["rel_pos_cross_track_nm"][k], rows["rel_pos_along_track_nm"][k]]
+                )
+                * nm,
+                np.array(
+                    [rows["rel_vel_cross_track_kts"][k], rows["rel_vel_along_track_kts"][k]]
+                )
+                * kts,
+                float(rows["conflict_tcpa_s"][k]),
+                bool(rows["in_conf"][k] > 0.5),
             )
-            # As a CAS by the atmosphere the autopilot converts it back with.
-            cas = float(
-                vtas2cas(np.array([gs]), np.array([float(ownship["alt_ft"]) * ft]))[0]
-            )
-            targets[acid] = (track, cas / kts)
-        return targets
+            for k, other in enumerate(rows["acid"])
+        }
+        conflicts = [other for other, (*_, in_conf) in pairs.items() if in_conf]
+        resolving = self._resolving.setdefault(agent, set())
+        active = self._past_cpa(own, pairs, conflicts, resolving)
 
-    def _past_cpa(self, own, pairs, conflicts) -> dict[str, bool]:
-        """Which aircraft resolve on (True) and which resume (False) - BlueSky's
-        ``PastCPA.resumenav``; one not named does neither."""
-        self._resolving |= set(conflicts)
-        active: dict[str, bool] = {}
-        for pair in list(self._resolving):
-            acid = pair[0]
-            if acid not in own:
-                self._resolving.discard(pair)
-                continue
-            resolving = False
-            if pair in pairs:
-                drel, vrel, _tcpa, _in_conf = pairs[pair]
+        given: dict[str, float] = {}
+        if active and conflicts:
+            self._selected_cas_kts.setdefault(agent, float(own["ap_cas_kts"]))
+            given["hdg_deg"], given["spd_kts"] = self._resolve(own, pairs, conflicts)
+        elif active is False:
+            given["autopilot_lnav"] = 1.0
+            if agent in self._selected_cas_kts:
+                given["spd_kts"] = self._selected_cas_kts.pop(agent)
+        return self._action(given)
+
+    def _resolve(self, own, pairs, conflicts) -> tuple[float, float]:
+        """New track (deg) and CAS (kt), as BlueSky's ``MVP.resolve``."""
+        dv = np.zeros(2)
+        for other in conflicts:
+            drel, vrel, tcpa, _in_conf = pairs[other]
+            dv -= mvp_dv(drel, vrel, tcpa, self._rpz_m * self.resofach)
+        cross, along = dv[0], float(own["gs_kts"]) * kts + dv[1]
+        track = (float(own["trk_deg"]) + math.degrees(math.atan2(cross, along))) % 360.0
+        # Capped as BlueSky does: the envelope's speeds against ground speed.
+        gs = min(
+            max(math.hypot(cross, along), float(own["perf_vmin_kts"]) * kts),
+            float(own["perf_vmax_kts"]) * kts,
+        )
+        # The autopilot takes a CAS.
+        cas = float(vtas2cas(np.array([gs]), np.array([float(own["alt_ft"]) * ft]))[0])
+        return track, cas / kts
+
+    def _past_cpa(self, own, pairs, conflicts, resolving) -> bool | None:
+        """Keep resolving (True), resume (False) or nothing to resolve (None),
+        as BlueSky's ``PastCPA.resumenav``; updates ``resolving``."""
+        resolving |= set(conflicts)
+        if not resolving:
+            return None
+        active = False
+        for other in list(resolving):
+            still = False
+            # An intruder no longer observed has left.
+            if other in pairs:
+                drel, vrel, _tcpa, _in_conf = pairs[other]
                 hdist = math.hypot(drel[0], drel[1])
                 past_cpa = float(drel @ vrel) > 0.0
                 # The intruder's track against the own: (0, gs) in this frame.
                 relative_trk = math.degrees(
-                    math.atan2(vrel[0], float(own[acid]["gs_kts"]) * kts + vrel[1])
+                    math.atan2(vrel[0], float(own["gs_kts"]) * kts + vrel[1])
                 )
                 bouncing = (
                     abs(relative_trk) < 30.0 and hdist < self._rpz_m * self.resofach
                 )
-                resolving = not past_cpa or hdist < self._rpz_m or bouncing
-            if resolving:
-                active[acid] = True
+                still = not past_cpa or hdist < self._rpz_m or bouncing
+            if still:
+                active = True
             else:
-                active[acid] = active.get(acid, False)
-                self._resolving.discard(pair)
+                resolving.discard(other)
         return active
 
     def hold(self) -> Any:
-        """The action that gives nothing: every aircraft flies on as it was."""
+        """The action that gives nothing: an aircraft flies on as it was."""
         return self._action({})
 
     def _action(self, given: Mapping[str, float]) -> Any:
@@ -281,15 +251,14 @@ def main() -> None:
     try:
         for seed in range(args.episodes):
             env.reset(seed=seed)
-            # BlueSky's resolution factor, as its own MVP would read it.
             policy = MVP(env.config, resofach=bs.settings.asas_marh)
             losses = set()
             # Until no aircraft is left nor still to come: in some environments
             # the first spawns after the start.
             while not env.episode_done:
                 if args.render:
-                    env.render()  # the first call opens the window
-                env.step(policy.act({agent: env.raw_observation(agent) for agent in env.agents}))
+                    env.render()
+                env.step({a: policy.act(a, env.raw_observation(a)) for a in env.agents})
                 losses |= {frozenset(pair) for pair in bs.traf.cd.lospairs}
             print(f"episode {seed}: {len(env.spawn_log)} aircraft, {len(losses)} pairs lost separation")
     finally:
