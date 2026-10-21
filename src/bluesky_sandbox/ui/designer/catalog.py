@@ -16,6 +16,7 @@ import re
 import sys
 import textwrap
 import types
+from collections.abc import Sequence
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from bluesky.tools.aero import ft, nm
@@ -277,6 +278,18 @@ def _optional_scalar(hint: Any) -> type | None:
 _REFERABLE: dict[type, str] = {ActionField: "action"}
 
 
+def _names(hint: Any) -> bool:
+    """Whether a parameter annotated ``hint`` takes several strings -
+    ``tuple[str, ...]``, ``list[str]`` - such as the fixes a turn is offered
+    after (``DirectToWaypoint.after``)."""
+    if hasattr(hint, "__metadata__"):  # unwrap Annotated[T, ...]
+        hint = get_args(hint)[0]
+    if get_origin(hint) not in (tuple, list, Sequence):
+        return False
+    args = [a for a in get_args(hint) if a is not Ellipsis]
+    return bool(args) and all(a is str for a in args)
+
+
 def _refers(hint: Any) -> str | None:
     """What a parameter annotated ``hint`` names, from :data:`_REFERABLE`."""
     if hint is None:
@@ -323,6 +336,11 @@ def _field_params(cls) -> list[dict[str, Any]]:
         if refers is not None:
             entry["refers"] = refers
         if isinstance(default, (int, float, str, bool)):
+            out.append(entry)
+        elif isinstance(default, (tuple, list)) and _names(hints.get(name, annotation)):
+            # Several names: edited as a list.
+            entry["default"] = list(default)
+            entry["many"] = True
             out.append(entry)
         elif default is None and _optional_scalar(hints.get(name, annotation)) is not None:
             # Optional scalar (e.g. dynamic-bounds ``low``/``high``): expose it so

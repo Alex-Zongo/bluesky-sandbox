@@ -44,7 +44,7 @@ export interface FieldOption {
 // A constructor parameter. `refers` says what it names - "action": one of the
 // design's actions - so it is picked from the design's own (`references`).
 // `blank` says what leaving an optional one blank means, as its code says it.
-type FieldParam = { name: string; type: string; default: any; refers?: string; blank?: string };
+type FieldParam = { name: string; type: string; default: any; refers?: string; blank?: string; many?: boolean };
 
 // A choice a referring parameter can take.
 export type Choice = { value: string; label?: string };
@@ -1059,6 +1059,7 @@ function ParamInput({
       </label>
     );
   }
+  if (param.many) return <NamesInput param={param} value={value} onChange={onChange} />;
   if (typeof param.default === "boolean") {
     return (
       <label className="radio modal-check">
@@ -1083,6 +1084,45 @@ function ParamInput({
           const raw = e.target.value;
           if (raw === "") onChange(undefined);
           else onChange(isNum ? parseFloat(raw) : raw);
+        }}
+      />
+    </label>
+  );
+}
+
+const parseNames = (text: string) =>
+  text.split(",").map((s) => s.trim()).filter(Boolean);
+
+// Several names, comma-separated - a field's tuple of strings. The text being
+// typed is kept (a trailing comma included); the design gets the names.
+function NamesInput({
+  param,
+  value,
+  onChange,
+}: {
+  param: FieldParam;
+  value: any;
+  onChange: (value: any | undefined) => void;
+}) {
+  const names: string[] = Array.isArray(value) ? value : [];
+  const [text, setText] = useState(names.join(", "));
+  // Follow the design when it changes elsewhere.
+  const key = names.join(",");
+  useEffect(() => {
+    if (parseNames(text).join(",") !== key) setText(names.join(", "));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return (
+    <label className="numfield inline">
+      <span>{param.name}</span>
+      <input
+        type="text"
+        placeholder={(param.default ?? []).join(", ") || "none - names, comma-separated"}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const parsed = parseNames(e.target.value);
+          onChange(parsed.length ? parsed : undefined);
         }}
       />
     </label>
