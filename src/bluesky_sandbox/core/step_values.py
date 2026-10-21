@@ -40,6 +40,7 @@ class StepValues:
         self._values: dict[int, np.ndarray] = {}
         self._pairs: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._actions: dict[str, dict[str, Any]] = {}
+        self._applied: dict[str, dict[str, bool]] = {}
 
     def clear(self) -> None:
         """Forget everything: a new episode."""
@@ -47,10 +48,12 @@ class StepValues:
         self._values.clear()
         self._pairs.clear()
         self._actions.clear()
+        self._applied.clear()
 
     def begin_step(self) -> None:
         """Forget the previous step's actions."""
         self._actions.clear()
+        self._applied.clear()
 
     @staticmethod
     def traffic() -> tuple[float, tuple[str, ...]]:
@@ -126,6 +129,15 @@ class StepValues:
     def action(self, acid: str) -> dict[str, Any]:
         """The raw action ``acid`` was given this step; empty if none."""
         return self._actions.get(acid, {})
+
+    def record_applied(self, acid: str, applied: dict[str, bool]) -> None:
+        """Whether each action field took effect for ``acid`` this step."""
+        self._applied[acid] = applied
+
+    def applied(self, acid: str, names: list[str]) -> dict[str, bool]:
+        """Whether each action field took effect for ``acid`` this step, by
+        name; every one ``False`` for an aircraft given no action."""
+        return self._applied.get(acid) or dict.fromkeys(names, False)
 
 
 class RawObservation(Mapping[str, Mapping[str, Any]]):

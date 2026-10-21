@@ -17,6 +17,7 @@ from bluesky.tools.aero import ft, kts
 
 from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.core.layout import action_applied, flatten_action, unflatten_action
+from bluesky_sandbox.core.step_values import unique_names_of
 from bluesky_sandbox.core.services import ActionDispatcher
 from bluesky_sandbox.env import BlueskyEnv
 from bluesky_sandbox.interface.fields import actions as act
@@ -311,6 +312,23 @@ def test_a_masked_heading_lets_the_aircraft_fly_out_its_last_vector(flying):
     np.testing.assert_array_equal(observations[agent], [1.0])
     np.testing.assert_array_equal(infos[agent]["action_applied"]["continuous"], [0.0])
     np.testing.assert_array_equal(infos[agent]["action_applied"]["binary"], [1.0])
+
+
+def test_the_context_says_by_name_which_actions_took_effect(flying):
+    observations, _ = flying.reset(seed=0)
+    (agent,) = observations
+    names = unique_names_of(flying.config.action_fields)
+
+    def applied():
+        return flying.agent_context(bs.traf.id.index(agent)).applied
+
+    # No action yet: none took effect.
+    assert applied() == dict(zip(names, [False, False]))
+    flying.step({agent: _act(180.0, 0)})
+    assert applied() == dict(zip(names, [True, True]))
+    # Masked: the heading did not go out; the mask did.
+    flying.step({agent: _act(0.0, 1)})
+    assert applied() == dict(zip(names, [False, True]))
 
 
 def test_without_a_mask_the_info_is_as_before():

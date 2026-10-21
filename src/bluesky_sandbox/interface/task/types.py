@@ -315,7 +315,10 @@ class AgentStepContext:
     - ``action``: the action it was given this step, as the value each action
       field was set to.
 
-    All read the values the step already computed.
+    All read the values the step already computed. ``applied`` says, by the
+    same names as ``action``, whether each took effect: ``False`` for one
+    masked, refused while a clearance is still being flown, or never given -
+    an aircraft given no action this step, as on the step it spawns.
 
     ``bounds(name)`` is one of the design's named bounds in this episode's
     frame - its boundary as primitives, its center, its frame - and
@@ -338,6 +341,9 @@ class AgentStepContext:
         default_factory=dict, repr=False
     )
     action: Annotated[Mapping[str, Any], DesignKeys("action")] = field(
+        default_factory=dict, repr=False
+    )
+    applied: Annotated[Mapping[str, bool], DesignKeys("action")] = field(
         default_factory=dict, repr=False
     )
     #: The design's shapes - areas and points - by name, in this episode's

@@ -645,6 +645,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
                 values = self._action_dispatcher.denormalize(idx, action)
                 self._step_values.record_action(acid, raw_action_values(values))
                 applied[acid] = self._action_dispatcher.apply_values(idx, values)
+            self._step_values.record_applied(
+                acid, dict(zip(unique_names_of(self.config.action_fields), applied[acid]))
+            )
         return applied
 
     def _outcomes(
@@ -1175,6 +1178,7 @@ class BlueskyBaseEnvironment(ParallelEnv):
             obs=self._raw_observation(acidx),
             state=self._raw_state(acidx),
             action=self._step_values.action(acid),
+            applied=self._step_values.applied(acid, unique_names_of(self.config.action_fields)),
             airspace=self._build_airspace_context(acidx),
             separation=self._traffic_monitor.build_separation_context(acid, acidx),
             shapes=self.episode_shapes,
