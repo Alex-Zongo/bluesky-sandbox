@@ -2,25 +2,14 @@
   "version": 1,
   "nav_cycle": null,
   "metadata": {
-    "name": "merge",
-    "note": "Two arrival streams at FL200, 280 KT, on a synthetic STAR: entry fixes W1 and E1 40 NM out, 90\u00b0 apart, merge at MERGE, a 25 NM trunk to IAF. 2\u20134 aircraft per branch, 90\u2013150 s in trail, the branches offset at random so arrivals at MERGE interleave. Done at IAF."
+    "name": "camrn-five",
+    "note": "Arrivals into JFK on the CAMRN FIVE STAR (SIE.CAMRN5): from SIE VORTAC on SIE R-049 and DPK R-221 to CAMRN, crossing HOGGS at FL180 and CAMRN at 11000 and 250 KT, as the chart's planning information expects. Two streams feed SIE in trail, on J121 from RADDS and on oceanic B24 from FISSH. Jets only. Done at CAMRN, where JFK approach would vector them to final."
   },
   "airspace": {
     "ref": "airspace"
   },
   "queryables": {
-    "exit": {
-      "type": "waypoint",
-      "reach_radius_nm": 2,
-      "color": "cyan",
-      "render_shape": false,
-      "render_label": false,
-      "track_temporal_state": false,
-      "shape": {
-        "ref": "exit"
-      }
-    },
-    "MERGE": {
+    "RADDS": {
       "type": "waypoint",
       "reach_radius_nm": 2,
       "color": "cyan",
@@ -28,10 +17,10 @@
       "render_label": true,
       "track_temporal_state": false,
       "shape": {
-        "ref": "MERGE"
+        "ref": "RADDS"
       }
     },
-    "W1": {
+    "FISSH": {
       "type": "waypoint",
       "reach_radius_nm": 2,
       "color": "cyan",
@@ -39,10 +28,10 @@
       "render_label": true,
       "track_temporal_state": false,
       "shape": {
-        "ref": "W1"
+        "ref": "FISSH"
       }
     },
-    "E1": {
+    "BOTON": {
       "type": "waypoint",
       "reach_radius_nm": 2,
       "color": "cyan",
@@ -50,10 +39,10 @@
       "render_label": true,
       "track_temporal_state": false,
       "shape": {
-        "ref": "E1"
+        "ref": "BOTON"
       }
     },
-    "IAF": {
+    "SIE": {
       "type": "waypoint",
       "reach_radius_nm": 2,
       "color": "cyan",
@@ -61,18 +50,74 @@
       "render_label": true,
       "track_temporal_state": false,
       "shape": {
-        "ref": "IAF"
+        "ref": "SIE"
       }
     },
-    "MERGE_REGION": {
-      "type": "query_region",
-      "shape": {
-        "ref": "MERGE_REGION"
-      },
+    "HOGGS": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
       "color": "cyan",
       "render_shape": true,
       "render_label": true,
-      "track_temporal_state": false
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "HOGGS"
+      }
+    },
+    "KARRS": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "KARRS"
+      }
+    },
+    "CAMRN": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "CAMRN"
+      }
+    },
+    "J121_ENTRY": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "magenta",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "J121_ENTRY"
+      }
+    },
+    "B24_ENTRY": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "yellow",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "B24_ENTRY"
+      }
+    },
+    "PANZE": {
+      "type": "waypoint",
+      "reach_radius_nm": 2,
+      "color": "cyan",
+      "render_shape": true,
+      "render_label": true,
+      "track_temporal_state": false,
+      "shape": {
+        "ref": "PANZE"
+      }
     }
   },
   "shapes": {
@@ -81,98 +126,287 @@
       "footprint": {
         "type": "disk",
         "center": {
-          "lat_deg": 56,
-          "lon_deg": 2
+          "lat_deg": 39.35,
+          "lon_deg": -74.45
         },
-        "radius_nm": 60,
+        "radius_nm": 200,
         "n_vertices": 72
       },
       "altitude": null
     },
-    "exit": {
+    "RADDS": {
       "type": "region",
       "footprint": {
         "type": "point",
         "center": {
-          "lat_deg": 56,
-          "lon_deg": 2
-        }
+          "lat_deg": 38.648556,
+          "lon_deg": -75.088467
+        },
+        "fix": "RADDS"
       }
     },
-    "MERGE": {
+    "FISSH": {
       "type": "region",
       "footprint": {
         "type": "point",
         "center": {
-          "lat_deg": 56,
-          "lon_deg": 2
-        }
+          "lat_deg": 38.891425,
+          "lon_deg": -74.383956
+        },
+        "fix": "FISSH"
       }
     },
-    "W1": {
+    "BOTON": {
       "type": "region",
       "footprint": {
         "type": "point",
         "center": {
-          "lat_deg": 56.4687,
-          "lon_deg": 1.1462
-        }
+          "lat_deg": 39.414472,
+          "lon_deg": -74.454744
+        },
+        "fix": "BOTON"
       }
     },
-    "E1": {
+    "SIE": {
       "type": "region",
       "footprint": {
         "type": "point",
         "center": {
-          "lat_deg": 56.4687,
-          "lon_deg": 2.8538
-        }
+          "lat_deg": 39.0955,
+          "lon_deg": -74.80033333
+        },
+        "fix": "SIE"
       }
     },
-    "IAF": {
+    "HOGGS": {
       "type": "region",
       "footprint": {
         "type": "point",
         "center": {
-          "lat_deg": 55.5831,
-          "lon_deg": 2
-        }
+          "lat_deg": 39.582847,
+          "lon_deg": -74.270575
+        },
+        "fix": "HOGGS"
       }
     },
-    "MERGE_REGION": {
+    "KARRS": {
       "type": "region",
       "footprint": {
-        "type": "box",
-        "lat_min_deg": 55.4971322835021,
-        "lat_max_deg": 56.10088203413953,
-        "lon_min_deg": 1.789618424743665,
-        "lon_max_deg": 2.218314535095246
+        "type": "point",
+        "center": {
+          "lat_deg": 39.840872,
+          "lon_deg": -73.985989
+        },
+        "fix": "KARRS"
+      }
+    },
+    "CAMRN": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 40.017303,
+          "lon_deg": -73.861058
+        },
+        "fix": "CAMRN"
+      }
+    },
+    "J121_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.4259,
+          "lon_deg": -75.2313
+        }
       },
-      "altitude": null
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 28000
+      }
+    },
+    "B24_ENTRY": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 38.7472,
+          "lon_deg": -74.1134
+        }
+      },
+      "altitude": {
+        "type": "constant",
+        "min_ft": 24000,
+        "max_ft": 28000
+      }
+    },
+    "PANZE": {
+      "type": "region",
+      "footprint": {
+        "type": "point",
+        "center": {
+          "lat_deg": 39.676,
+          "lon_deg": -74.168194
+        },
+        "fix": "PANZE"
+      }
     }
   },
   "spawn": {
     "type": "spawn_config",
     "route": null,
     "routes": {
-      "STAR_W": [
-        "W1",
-        "MERGE",
-        "IAF"
+      "J121": {
+        "type": "route",
+        "steps": [
+          "RADDS",
+          "SIE"
+        ],
+        "color": "green"
+      },
+      "B24": {
+        "type": "route",
+        "steps": [
+          "FISSH",
+          "SIE"
+        ],
+        "color": "blue"
+      },
+      "CAMRN5": {
+        "type": "route",
+        "steps": [
+          "SIE",
+          "BOTON",
+          {
+            "waypoint": "HOGGS",
+            "alt_ft": 18000
+          },
+          "PANZE",
+          "KARRS",
+          {
+            "waypoint": "CAMRN",
+            "alt_ft": 11000,
+            "speed_kts": 250
+          }
+        ],
+        "color": "magenta"
+      },
+      "VIA_J121": [
+        {
+          "route": "J121"
+        },
+        {
+          "route": "CAMRN5"
+        }
       ],
-      "STAR_E": [
-        "E1",
-        "MERGE",
-        "IAF"
+      "VIA_B24": [
+        {
+          "route": "B24"
+        },
+        {
+          "route": "CAMRN5"
+        }
       ]
     },
-    "regions": [],
-    "sources": [
+    "regions": [
       {
-        "name": "star",
-        "when_blocked": "defer",
-        "max_aircraft": 10,
-        "plan": "# This episode's aircraft, each a SpawnRequest with its time: read any data\n# (scenario setup can load a file once), draw from any distribution.\n# ctx: the episode's shapes, queryables, airspace and spawn config.\n\nmerge = ctx.shapes[\"MERGE\"].center\nout = []\n\nfor route, entry in ROUTES.items():\n    fix = ctx.shapes[entry].center\n    hdg, _ = kwikqdrdist(fix.lat_deg, fix.lon_deg, merge.lat_deg, merge.lon_deg)  # inbound track\n    at = _point(fix, hdg + 180.0, SPAWN_BEFORE_NM)      # on the inbound line, before the fix\n    t = rng.uniform(0.0, 120.0)                           # this branch's first spawn\n    for k in range(int(rng.integers(PER_BRANCH[0], PER_BRANCH[1] + 1))):\n        out.append(SpawnRequest(at=at, alt_ft=ALT_FT, spd_kts=CAS_KTS, hdg_deg=hdg, actype=AC_TYPE,\n                                callsign=f\"{route[-1]}{k + 1:02d}\", route=route, time_s=t))\n        t += rng.uniform(*IN_TRAIL_S)\nreturn out\n"
+        "type": "spawn_region",
+        "shape": {
+          "ref": "J121_ENTRY"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [],
+          "kwds": {
+            "low": 3,
+            "high": 6
+          }
+        },
+        "params": {
+          "spd_kts": {
+            "type": "range",
+            "low": 280,
+            "high": 300
+          },
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A321": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "callsign_prefixes": null,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 900
+        },
+        "route": "VIA_J121",
+        "name": "J121",
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120,
+        "conflict_free_spawn": true,
+        "conflict_free_margin_nm": 5,
+        "conflict_free_margin_ft": 1000
+      },
+      {
+        "type": "spawn_region",
+        "shape": {
+          "ref": "B24_ENTRY"
+        },
+        "n_aircraft": {
+          "type": "scipy",
+          "name": "randint",
+          "args": [],
+          "kwds": {
+            "low": 3,
+            "high": 6
+          }
+        },
+        "params": {
+          "spd_kts": {
+            "type": "range",
+            "low": 280,
+            "high": 300
+          },
+          "hdg_deg": {
+            "type": "toward_route"
+          }
+        },
+        "aircraft_type": {
+          "type": "categorical",
+          "weights": {
+            "A320": 1,
+            "B738": 1,
+            "A321": 1,
+            "B739": 1,
+            "E190": 1
+          }
+        },
+        "callsign_prefixes": null,
+        "spawn_time": {
+          "type": "range",
+          "low": 0,
+          "high": 900
+        },
+        "route": "VIA_B24",
+        "name": "B24",
+        "render_shape": true,
+        "render_name": true,
+        "spawn_gap_s": 120,
+        "conflict_free_spawn": true,
+        "conflict_free_margin_nm": 5,
+        "conflict_free_margin_ft": 1000
       }
     ]
   },
@@ -465,11 +699,12 @@
     "task_info_setup": "",
     "task_info": [],
     "task_info_providers": [],
-    "hook_setup": "",
+    "hook_setup": "import bluesky as bs\n",
     "hooks": {
       "cost": "# Seconds in loss of separation this step.\nreturn float(context.separation.los.time.during_step_s)\n",
+      "on_aircraft_spawned": "# Hook for tasks that need to tune aircraft after route creation.\n# fly the route's altitude and speed crossing\n\n\nbs.stack.stack(f\"VNAV {callsign} ON\")\nreturn None\n",
       "reward": "# Every minute flown costs 0.1, every second in loss of separation 1:\n# through the encounter safely, and without a long detour.\nreturn -0.1 * self.config.dt / 60.0 - float(context.separation.los.time.during_step_s)\n",
-      "terminated": "# Out of the airspace: through the encounter.\nreturn context.query(\"IAF\").current.within_lateral or not info[\"in_airspace\"]\n",
+      "terminated": "# at CAMRN: handed to JFK approach\nreturn context.query(\"CAMRN\").current.within_lateral or not info[\"in_airspace\"]\n",
       "truncated": "return False\n"
     },
     "dt": 1,
@@ -488,6 +723,6 @@
     "gust_tau_s": 30
   },
   "code": {},
-  "scenario_setup": "from bluesky.tools.geo import kwikqdrdist, qdrpos\n\nALT_FT = 20_000\nCAS_KTS = 280.0\nAC_TYPE = \"A320\"\nROUTES = {\"STAR_W\": \"W1\", \"STAR_E\": \"E1\"}   # each route, by its entry fix\nSPAWN_BEFORE_NM = 5.0             # spawn this far before the entry fix, on the inbound line\nIN_TRAIL_S = (90.0, 150.0)        # gaps between consecutive aircraft on one branch\nPER_BRANCH = (2, 4)               # aircraft per branch, inclusive\n\n\n\ndef _point(center, bearing_deg, dist_nm):\n    \"\"\"The point dist_nm from center, on that bearing from it.\"\"\"\n    lat, lon = qdrpos(center.lat_deg, center.lon_deg, bearing_deg, dist_nm)\n    return LatLon(float(lat), float(lon))\n",
+  "scenario_setup": "from bluesky.tools.geo import kwikqdrdist, qdrpos\n",
   "scenario_hooks": {}
 }

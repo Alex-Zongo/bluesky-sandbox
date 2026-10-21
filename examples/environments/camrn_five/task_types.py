@@ -14,30 +14,43 @@ to update them.
 
 from __future__ import annotations
 
-from bluesky_sandbox import AgentStepContext, QueryRegion, RegionBounds, RegionResult, StepBatch, Waypoint, WaypointResult
+from bluesky_sandbox import AgentStepContext, RegionBounds, StepBatch, Waypoint, WaypointResult
 from bluesky_sandbox.core.services import QueryBatch
 from numpy import ndarray
 from typing import Any, Literal, TypedDict, overload
 
 
 class Queryables(TypedDict):
-    exit: Waypoint
+    RADDS: Waypoint
     """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
 ad-hoc point."""
-    MERGE: Waypoint
+    FISSH: Waypoint
     """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
 ad-hoc point."""
-    W1: Waypoint
+    BOTON: Waypoint
     """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
 ad-hoc point."""
-    E1: Waypoint
+    SIE: Waypoint
     """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
 ad-hoc point."""
-    IAF: Waypoint
+    HOGGS: Waypoint
     """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
 ad-hoc point."""
-    MERGE_REGION: QueryRegion
-    """QueryRegion - A named spatial region tested for containment per step."""
+    KARRS: Waypoint
+    """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
+ad-hoc point."""
+    CAMRN: Waypoint
+    """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
+ad-hoc point."""
+    J121_ENTRY: Waypoint
+    """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
+ad-hoc point."""
+    B24_ENTRY: Waypoint
+    """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
+ad-hoc point."""
+    PANZE: Waypoint
+    """Waypoint - A place aircraft are evaluated against: a BlueSky navdb fix or an
+ad-hoc point."""
 
 
 class ObsOwnship(TypedDict):
@@ -109,18 +122,26 @@ Action = TypedDict('Action', {'hdg_deg': float, 'action_mask': float, 'spd_kts':
 class Shapes(TypedDict):
     airspace: RegionBounds
     """Disk - Bounds built from a horizontal footprint and an altitude band."""
-    exit: RegionBounds
+    RADDS: RegionBounds
     """Point - Bounds built from a horizontal footprint and an altitude band."""
-    MERGE: RegionBounds
+    FISSH: RegionBounds
     """Point - Bounds built from a horizontal footprint and an altitude band."""
-    W1: RegionBounds
+    BOTON: RegionBounds
     """Point - Bounds built from a horizontal footprint and an altitude band."""
-    E1: RegionBounds
+    SIE: RegionBounds
     """Point - Bounds built from a horizontal footprint and an altitude band."""
-    IAF: RegionBounds
+    HOGGS: RegionBounds
     """Point - Bounds built from a horizontal footprint and an altitude band."""
-    MERGE_REGION: RegionBounds
-    """Box - Bounds built from a horizontal footprint and an altitude band."""
+    KARRS: RegionBounds
+    """Point - Bounds built from a horizontal footprint and an altitude band."""
+    CAMRN: RegionBounds
+    """Point - Bounds built from a horizontal footprint and an altitude band."""
+    J121_ENTRY: RegionBounds
+    """Point - Bounds built from a horizontal footprint and an altitude band."""
+    B24_ENTRY: RegionBounds
+    """Point - Bounds built from a horizontal footprint and an altitude band."""
+    PANZE: RegionBounds
+    """Point - Bounds built from a horizontal footprint and an altitude band."""
 
 
 class ObsBatchOwnship(TypedDict):
@@ -197,35 +218,52 @@ class TaskAgentStepContext(AgentStepContext):
     obs: Obs
     state: State
     action: Action
+    applied: Action
     shapes: Shapes
-    def bounds(self, name: Literal['airspace', 'exit', 'MERGE', 'W1', 'E1', 'IAF', 'MERGE_REGION']) -> RegionBounds: ...
+    def bounds(self, name: Literal['airspace', 'RADDS', 'FISSH', 'BOTON', 'SIE', 'HOGGS', 'KARRS', 'CAMRN', 'J121_ENTRY', 'B24_ENTRY', 'PANZE']) -> RegionBounds: ...
     @overload
-    def query(self, name: Literal['exit']) -> WaypointResult: ...
+    def query(self, name: Literal['RADDS']) -> WaypointResult: ...
     @overload
-    def query(self, name: Literal['MERGE']) -> WaypointResult: ...
+    def query(self, name: Literal['FISSH']) -> WaypointResult: ...
     @overload
-    def query(self, name: Literal['W1']) -> WaypointResult: ...
+    def query(self, name: Literal['BOTON']) -> WaypointResult: ...
     @overload
-    def query(self, name: Literal['E1']) -> WaypointResult: ...
+    def query(self, name: Literal['SIE']) -> WaypointResult: ...
     @overload
-    def query(self, name: Literal['IAF']) -> WaypointResult: ...
+    def query(self, name: Literal['HOGGS']) -> WaypointResult: ...
     @overload
-    def query(self, name: Literal['MERGE_REGION']) -> RegionResult: ...
+    def query(self, name: Literal['KARRS']) -> WaypointResult: ...
+    @overload
+    def query(self, name: Literal['CAMRN']) -> WaypointResult: ...
+    @overload
+    def query(self, name: Literal['J121_ENTRY']) -> WaypointResult: ...
+    @overload
+    def query(self, name: Literal['B24_ENTRY']) -> WaypointResult: ...
+    @overload
+    def query(self, name: Literal['PANZE']) -> WaypointResult: ...
     def query(self, name: str) -> Any: ...
     @overload
-    def queryable(self, name: Literal['exit']) -> Waypoint: ...
+    def queryable(self, name: Literal['RADDS']) -> Waypoint: ...
     @overload
-    def queryable(self, name: Literal['MERGE']) -> Waypoint: ...
+    def queryable(self, name: Literal['FISSH']) -> Waypoint: ...
     @overload
-    def queryable(self, name: Literal['W1']) -> Waypoint: ...
+    def queryable(self, name: Literal['BOTON']) -> Waypoint: ...
     @overload
-    def queryable(self, name: Literal['E1']) -> Waypoint: ...
+    def queryable(self, name: Literal['SIE']) -> Waypoint: ...
     @overload
-    def queryable(self, name: Literal['IAF']) -> Waypoint: ...
+    def queryable(self, name: Literal['HOGGS']) -> Waypoint: ...
     @overload
-    def queryable(self, name: Literal['MERGE_REGION']) -> QueryRegion: ...
+    def queryable(self, name: Literal['KARRS']) -> Waypoint: ...
+    @overload
+    def queryable(self, name: Literal['CAMRN']) -> Waypoint: ...
+    @overload
+    def queryable(self, name: Literal['J121_ENTRY']) -> Waypoint: ...
+    @overload
+    def queryable(self, name: Literal['B24_ENTRY']) -> Waypoint: ...
+    @overload
+    def queryable(self, name: Literal['PANZE']) -> Waypoint: ...
     def queryable(self, name: str) -> Any: ...
-    def shape(self, name: Literal['airspace', 'exit', 'MERGE', 'W1', 'E1', 'IAF', 'MERGE_REGION']) -> RegionBounds: ...
+    def shape(self, name: Literal['airspace', 'RADDS', 'FISSH', 'BOTON', 'SIE', 'HOGGS', 'KARRS', 'CAMRN', 'J121_ENTRY', 'B24_ENTRY', 'PANZE']) -> RegionBounds: ...
 
 
 class TaskStepBatch(StepBatch):
@@ -235,7 +273,7 @@ class TaskStepBatch(StepBatch):
     obs: ObsBatch
     state: StateBatch
     action: ActionBatch
-    def bounds(self, name: Literal['airspace', 'exit', 'MERGE', 'W1', 'E1', 'IAF', 'MERGE_REGION']) -> RegionBounds: ...
-    def query(self, name: Literal['exit', 'MERGE', 'W1', 'E1', 'IAF', 'MERGE_REGION']) -> QueryBatch: ...
-    def shape(self, name: Literal['airspace', 'exit', 'MERGE', 'W1', 'E1', 'IAF', 'MERGE_REGION']) -> RegionBounds: ...
+    def bounds(self, name: Literal['airspace', 'RADDS', 'FISSH', 'BOTON', 'SIE', 'HOGGS', 'KARRS', 'CAMRN', 'J121_ENTRY', 'B24_ENTRY', 'PANZE']) -> RegionBounds: ...
+    def query(self, name: Literal['RADDS', 'FISSH', 'BOTON', 'SIE', 'HOGGS', 'KARRS', 'CAMRN', 'J121_ENTRY', 'B24_ENTRY', 'PANZE']) -> QueryBatch: ...
+    def shape(self, name: Literal['airspace', 'RADDS', 'FISSH', 'BOTON', 'SIE', 'HOGGS', 'KARRS', 'CAMRN', 'J121_ENTRY', 'B24_ENTRY', 'PANZE']) -> RegionBounds: ...
     def context(self, k: int) -> TaskAgentStepContext: ...

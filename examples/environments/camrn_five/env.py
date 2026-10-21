@@ -8,7 +8,10 @@ from bluesky_sandbox.config import EnvConfig
 from bluesky_sandbox.env import BlueskyEnv, EnvOptions
 
 from .config import CONFIG
-from .scenario import MergeScenario
+from .scenario import CamrnFiveScenario
+from .setup import (
+    bs,
+)
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,15 +21,15 @@ if TYPE_CHECKING:
     from .task_types import TaskAgentStepContext
 
 
-class MergeEnvKwargs(EnvOptions, total=False):
-    """What :class:`MergeEnv` takes, as keywords - to pass on, typed,
-    with ``**env_kwargs: Unpack[MergeEnvKwargs]``."""
+class CamrnFiveEnvKwargs(EnvOptions, total=False):
+    """What :class:`CamrnFiveEnv` takes, as keywords - to pass on, typed,
+    with ``**env_kwargs: Unpack[CamrnFiveEnvKwargs]``."""
 
     config: EnvConfig
-    scenario: MergeScenario
+    scenario: CamrnFiveScenario
 
 
-class MergeEnv(BlueskyEnv):
+class CamrnFiveEnv(BlueskyEnv):
     """Generated environment class with task behavior in Python code.
 
     ``config`` defaults to this task's (``CONFIG``) - pass a changed copy,
@@ -37,10 +40,10 @@ class MergeEnv(BlueskyEnv):
         self,
         *,
         config: EnvConfig = CONFIG,
-        scenario: MergeScenario | None = None,
+        scenario: CamrnFiveScenario | None = None,
         **options: Unpack[EnvOptions],
     ) -> None:
-        scenario = MergeScenario() if scenario is None else scenario
+        scenario = CamrnFiveScenario() if scenario is None else scenario
         super().__init__(config=config, scenario=scenario, **options)
 
     def define_task_info_providers(self):
@@ -70,8 +73,8 @@ class MergeEnv(BlueskyEnv):
         info: BaseAgentInfo,
         rng: Generator,
     ) -> bool:
-        # Out of the airspace: through the encounter.
-        return context.query("IAF").current.within_lateral or not info["in_airspace"]
+        # at CAMRN: handed to JFK approach
+        return context.query("CAMRN").current.within_lateral or not info["in_airspace"]
 
     def truncated(
         self,
@@ -96,6 +99,14 @@ class MergeEnv(BlueskyEnv):
         # Seconds in loss of separation this step.
         return float(context.separation.los.time.during_step_s)
 
+    def on_aircraft_spawned(self, callsign: str, route: list[str] | None) -> None:
+        # Hook for tasks that need to tune aircraft after route creation.
+        # fly the route's altitude and speed crossing
+
+
+        bs.stack.stack(f"VNAV {callsign} ON")
+        return None
+
 
 def main() -> None:
     """Smoke rollout: print the task spec, then step with random actions.
@@ -103,7 +114,7 @@ def main() -> None:
     This is a multi-agent (PettingZoo parallel) environment - ``step`` takes a
     dict of per-agent actions and returns dicts keyed by agent.
     """
-    env = MergeEnv(render_mode="pygame")
+    env = CamrnFiveEnv(render_mode="pygame")
     env.reset(seed=0)
     if env.render_mode is not None:
         env.render()
