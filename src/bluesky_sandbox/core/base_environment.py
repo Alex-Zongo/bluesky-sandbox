@@ -326,6 +326,9 @@ class BlueskyBaseEnvironment(ParallelEnv):
         # This step for every agent at once, built on first use by a batched hook.
         self._batch: StepBatch | None = None
         self._agent_context_cache_enabled = False
+        # The episodes' random stream: started by a seeded reset, continued by
+        # an unseeded one.
+        self._rng: np.random.Generator | None = None
 
         # Aircraft scheduled to spawn later in the episode (spawn_time > 0).
         # Sorted ascending by spawn_time; drained at the top of each step()
@@ -470,7 +473,11 @@ class BlueskyBaseEnvironment(ParallelEnv):
         self._clear_agent_context_cache()
         self._step_values.clear()
         self._batch = None
-        self._rng = np.random.default_rng(seed)
+        # A seed starts the stream; a reset without one goes on with it, as
+        # Gymnasium's do - so a vector env seeded once, whose later resets pass
+        # no seed, plays the same episodes every run.
+        if seed is not None or self._rng is None:
+            self._rng = np.random.default_rng(seed)
         self._wind.reset()
         self.episode_spec = self.scenario.sample(self._rng)
         resolve_spawn_aircraft_types(self.config, self.episode_spec.spawn)
