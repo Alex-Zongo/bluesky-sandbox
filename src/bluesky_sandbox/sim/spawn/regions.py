@@ -897,8 +897,9 @@ class SpawnConfig:
                 continue
             counts[region_index] = max(region.sample_n(rng), 0)
         # Never an empty episode: a region's count draw may legitimately come
-        # out 0, so floor the total at 1 aircraft.
-        if counts and sum(counts.values()) == 0:
+        # out 0, so floor the total at 1 aircraft - unless sources plan the
+        # traffic, the regions perhaps only their templates.
+        if counts and not self.sources and sum(counts.values()) == 0:
             counts[int(rng.choice(list(counts)))] = 1
         candidates = []
         for region_index, n in counts.items():

@@ -5,6 +5,7 @@ regions' are; each source's own clearance and route rules apply."""
 from __future__ import annotations
 
 import bluesky as bs
+import numpy as np
 import pytest
 
 from bluesky_sandbox.config import EnvConfig
@@ -14,6 +15,7 @@ from bluesky_sandbox.sim.queryables import Waypoint
 from bluesky_sandbox.sim.scenario import EpisodeSpec
 from bluesky_sandbox.sim.spawn import (
     Mixture,
+    PlanContext,
     PlannedSource,
     RegionSource,
     Replay,
@@ -145,10 +147,10 @@ def test_a_mixture_draws_each_aircraft_from_one_of_its_sources():
 # ---- one plan, one draw, one clearing ------------------------------------ #
 
 
-def _config(*sources, cap=None) -> SpawnConfig:
+def _config(*sources, cap=None, n_aircraft=3) -> SpawnConfig:
     region = SpawnRegion(
         shape=RegionBounds(BoxFootprint(51.9, 52.1, 3.5, 3.7)),
-        n_aircraft=3,
+        n_aircraft=n_aircraft,
         params={"alt_ft": 20_000.0, "spd_kts": (240.0, 280.0)},
         callsign_prefixes=["KLM"],
         route="west_in",
@@ -163,10 +165,6 @@ def _config(*sources, cap=None) -> SpawnConfig:
 
 
 def test_a_region_source_draws_as_its_region_does():
-    import numpy as np
-
-    from bluesky_sandbox.sim.spawn import PlanContext
-
     config = _config()
     drawn = config.draw_request(0, np.random.default_rng(3))
     via_source = RegionSource(config.regions[0]).draw(np.random.default_rng(3), PlanContext(spawn=config))
@@ -175,10 +173,6 @@ def test_a_region_source_draws_as_its_region_does():
 
 
 def test_the_plan_is_the_regions_and_the_sources_by_time_within_the_cap():
-    import numpy as np
-
-    from bluesky_sandbox.sim.spawn import PlanContext
-
     replay = Replay([SpawnRequest(at=EAST, alt_ft=30_000.0, time_s=t) for t in (5.0, 50.0)], name="adsb", route="west_in")
     config = _config(replay)
     planned = config.plan_episode(np.random.default_rng(0), PlanContext(spawn=config))
@@ -191,11 +185,17 @@ def test_the_plan_is_the_regions_and_the_sources_by_time_within_the_cap():
     assert len(capped) == 4
 
 
+def test_empty_regions_add_no_aircraft_to_a_sources_plan():
+    replay = Replay([SpawnRequest(at=EAST, alt_ft=30_000.0, time_s=5.0)], name="adsb", route="west_in")
+    for seed in range(10):
+        alone = _config(n_aircraft=0)
+        assert len(alone.plan_episode(np.random.default_rng(seed), PlanContext(spawn=alone))) == 1
+        sourced = _config(replay, n_aircraft=0)
+        planned = sourced.plan_episode(np.random.default_rng(seed), PlanContext(spawn=sourced))
+        assert [p.source_index for p in planned] == [0]
+
+
 def test_the_episode_spawns_its_plan():
-    import numpy as np
-
-    from bluesky_sandbox.sim.spawn import PlanContext
-
     replay = Replay([SpawnRequest(at=EAST, alt_ft=30_000.0, time_s=0.0)], name="adsb")
     scenario = _Scenario(replay)
     scenario.spawn = _config(replay)
