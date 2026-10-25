@@ -87,10 +87,14 @@ class MVP:
 
         env = RandomEncountersEnv()
         policy = MVP(env.config, resofach=bs.settings.asas_marh)
-        env.reset(seed=0)
+        observations, infos = env.reset(seed=0)
         policy.reset()
         while env.agents:
-            env.step({a: policy.act(a, env.raw_observation(a)) for a in env.agents})
+            actions = {a: policy.act(a, env.raw_observation(a)) for a in env.agents}
+            observations, rewards, terminations, truncations, infos = env.step(actions)
+
+    It reads ``env.raw_observation``: the step's observation in raw values,
+    naming each intruder, which its past-CPA memory needs.
 
     ``resofach`` is BlueSky's ``RFACH``: the zone is resolved to its radius
     times it.
@@ -220,7 +224,8 @@ class MVP:
 
 
 def main() -> None:
-    """Fly Random Encounters with MVP and count the pairs losing separation."""
+    """Fly Random Encounters with MVP: each episode's return and cost per
+    aircraft, and the pairs losing separation."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("episodes", type=int, nargs="?", default=10)
     parser.add_argument(
@@ -235,15 +240,27 @@ def main() -> None:
     env = RandomEncountersEnv(render_mode=args.render, realtime=args.render is not None)
     try:
         for seed in range(args.episodes):
-            env.reset(seed=seed)
+            observations, infos = env.reset(seed=seed)
             policy = MVP(env.config, resofach=bs.settings.asas_marh)
+            returns: dict[str, float] = {}
+            costs: dict[str, float] = {}
             losses = set()
             while env.agents:
                 if args.render:
                     env.render()
-                env.step({a: policy.act(a, env.raw_observation(a)) for a in env.agents})
-                losses |= {frozenset(pair) for pair in bs.traf.cd.lospairs}
-            print(f"episode {seed}: {len(env.spawn_log)} aircraft, {len(losses)} pairs lost separation")
+                actions = {a: policy.act(a, env.raw_observation(a)) for a in env.agents}
+                observations, rewards, terminations, truncations, infos = env.step(actions)
+                for agent, reward in rewards.items():
+                    returns[agent] = returns.get(agent, 0.0) + float(reward)
+                    costs[agent] = costs.get(agent, 0.0) + float(infos[agent]["cost"])
+                    los = infos[agent]["separation"]["los"]["step_partners"]
+                    losses |= {frozenset((agent, other)) for other in los}
+            print(
+                f"episode {seed}: {len(returns)} aircraft,"
+                f" return {np.mean(list(returns.values())):.2f},"
+                f" cost {np.mean(list(costs.values())):.2f} per aircraft,"
+                f" {len(losses)} pairs lost separation"
+            )
     finally:
         env.close()
 
